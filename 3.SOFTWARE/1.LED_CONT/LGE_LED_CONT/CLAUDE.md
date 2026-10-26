@@ -26,6 +26,7 @@ LGE_DC_27 프로젝트의 LED 컨트롤러 펌웨어(ESP32-C6 SuperMini, Platfor
 - `platformio.ini`: 환경 `dc27_frt_10/11/12/13`, 각각 `-DDEVICE_ID=0x1x`. `default_envs = dc27_frt_10`.
 - `include/board_pins.h`: LED 데이터 GPIO6 (핀은 여기 한 곳). `include/usb_noreset.h`: DTR/RTS 자동 리셋 차단 + `F0 A5 5A` 다운로드 모드.
 - `tools/led_tester.exe`, 소스 `tools/led_tester_src` (이펙트 명령표는 `ui.html`의 `CMDS`/`FX`/`NEW_ID`).
+- `src/ble_ota.cpp/.h`: BLE 무선 업데이트(전원 인가 후 5분, PIN, 태그 `DC27FW|LED|0x10|1.0|` 확인). 설정은 `config.h`의 `FW_TYPE`/`FW_DESC`/`FW_VERSION`/`BLE_OTA_WINDOW_S`/`BLE_OTA_PIN`. `tools/bin_copy.py`가 빌드 후 `bin/LED_0x10_v1.0.bin`을 만든다. PC 쪽 `tools/led_ota.exe`, 소스 `tools/led_ota_src`. 프로토콜은 `ble_ota.h` 머리말.
 
 ## 전원 인가 표시 (2026-10-25 사용자 요청)
 - 전원 인가 직후 PC 미연결이면 스카이블루 디밍 온/오프 반복(0.5 s 업 + 0.5 s 다운). PC에서 첫 바이트를 받으면 소등(`neo_effect_host_seen()`, main.cpp의 수신 루프에서 호출). 재부팅 전까지 다시 켜지지 않는다. 색 `COLOR_BOOT_WAIT`(colors.h), 주기 `NEO_CFG_BOOT_WAIT_PERIOD_MS`(neo_effect_config.h). DTR은 쓰지 않는다(PC 프로그램이 스캔 때 DTR을 끔).
@@ -45,7 +46,10 @@ LGE_DC_27 프로젝트의 LED 컨트롤러 펌웨어(ESP32-C6 SuperMini, Platfor
 | 이펙트 동작/색/시간 | `src/neo_effect.cpp`, `src/colors.h`, `src/neo_effect_config.h` + `tools/led_tester_src/ui.html`(`CMDS`) + `README.md` 이펙트 표 + exe 다시 빌드 |
 | ID ↔ 구성 대응, LED 수 | `src/config.h`, `platformio.ini`(환경), `tools/led_tester_src/ui.html`(`FX`, `NEW_ID`) + `README.md` ID 표 + exe 다시 빌드 |
 | 핀 | `include/board_pins.h` + README (+ 공통 핀 표 `ESP32C6/README.md`) |
+| 펌웨어를 고쳐서 내보낼 때 | `src/config.h`의 `FW_VERSION` 올리기 (bin 이름·exe 화면·BLE INFO에 나온다) |
+| BLE 업데이트 프로토콜(UUID, 명령, 상태 코드) | `src/ble_ota.h/.cpp` + `tools/led_ota_src/main.go` 같이 + exe 다시 빌드 |
 - exe 다시 빌드(Go 필요): `tools\led_tester_src`에서 `go build -ldflags "-H=windowsgui -s -w" -o ..\led_tester.exe .` (exe가 실행 중이면 창을 닫는다.)
+- BLE 업데이트 exe: `tools\led_ota_src`에서 `go build -trimpath -ldflags "-H=windowsgui -s -w" -o ..\led_ota.exe .`
 
 ## 변경하면 반드시
 - 컴파일 확인(`pio run -e dc27_frt_10`와 필요한 ID 환경, 가능하면 4개 ID 모두).
@@ -53,19 +57,22 @@ LGE_DC_27 프로젝트의 LED 컨트롤러 펌웨어(ESP32-C6 SuperMini, Platfor
 - **"최종 파일 목록"의 해시를 새 값으로 갱신하고, "작업 기록"에 한 줄 추가**(날짜, 어디서, 무엇을, 확인한 것). 이 파일 자신은 해시 목록에 넣지 않는다.
 - 문서와 파일이 어긋난 채로 작업을 끝내지 않는다.
 
-## 최종 파일 목록 (SHA-256 앞 12자리, 마지막 갱신: 2026-10-25, 확인한 쪽: Claude 앱 — PC 폴더의 실제 파일을 읽어 계산)
+## 최종 파일 목록 (SHA-256 앞 12자리, 마지막 갱신: 2026-10-26, 확인한 쪽: Claude 앱 — BLE 업데이트 추가 후 계산)
 | 파일 | 해시 |
 |---|---|
-| `platformio.ini` | `a8d91576fad3` |
-| `README.md` | `cd8a841f67cb` |
+| `platformio.ini` | `e71c1f2e1ab6` |
+| `README.md` | `982ddf0170e5` |
 | `include/board_pins.h` | `66aaf9842d6f` |
 | `include/usb_noreset.h` | `7b571853a92f` |
+| `src/ble_ota.cpp` | `5115d0e77abb` |
+| `src/ble_ota.h` | `b465cb76f148` |
 | `src/colors.h` | `1ca0dca525a8` |
-| `src/config.h` | `63e99297b3b5` |
-| `src/main.cpp` | `ad3ad6e34763` |
+| `src/config.h` | `5a1eb2164249` |
+| `src/main.cpp` | `8c6157261baf` |
 | `src/neo_effect.cpp` | `e3a2cb9feb2e` |
 | `src/neo_effect.h` | `ffa77d83cd89` |
 | `src/neo_effect_config.h` | `8323a36a6cbd` |
+| `tools/bin_copy.py` | `0c9676afaabc` |
 | `tools/led_tester.exe` | `7754f8c490a4` |
 | `tools/led_tester_src/ui.html` | `a86f7fb8a0f2` |
 | `tools/led_tester_src/main.go` | `b68f0c8f48f8` |
@@ -74,10 +81,19 @@ LGE_DC_27 프로젝트의 LED 컨트롤러 펌웨어(ESP32-C6 SuperMini, Platfor
 | `tools/led_tester_src/console_windows.go` | `20da136eee9e` |
 | `tools/led_tester_src/go.mod` | `3344f06c5972` |
 | `tools/led_tester_src/go.sum` | `f643a5e49304` |
-- `.pio`, `.vscode`, `.gitignore`는 빌드 산출물/편집기 설정이라 제외. 이 `CLAUDE.md`도 제외. PowerShell 출력의 경로 구분자는 `\`, 위 표는 `/` 이다(해시만 비교).
-- exe(`tools/led_tester.exe`)는 소스(`led_tester_src`)와 짝이다. 소스를 고쳤는데 exe를 다시 빌드하지 않았거나 그 반대이면 어긋난 것이다.
+| `tools/led_ota.exe` | `5d7aa4bc320f` |
+| `tools/led_ota_src/ui.html` | `1c824b7aae1e` |
+| `tools/led_ota_src/main.go` | `412d86efa89e` |
+| `tools/led_ota_src/gui_windows.go` | `c1502e105dcf` |
+| `tools/led_ota_src/console_other.go` | `5d71a8edbf8c` |
+| `tools/led_ota_src/console_windows.go` | `20da136eee9e` |
+| `tools/led_ota_src/go.mod` | `8eb33c1b5f9a` |
+| `tools/led_ota_src/go.sum` | `0de24483bfce` |
+- `.pio`, `.vscode`, `bin`, `.gitignore`는 빌드 산출물/편집기 설정이라 제외. 이 `CLAUDE.md`도 제외. PowerShell 출력의 경로 구분자는 `\`, 위 표는 `/` 이다(해시만 비교).
+- exe(`tools/led_tester.exe`, `tools/led_ota.exe`)는 각각 소스(`led_tester_src`, `led_ota_src`)와 짝이다. 소스를 고쳤는데 exe를 다시 빌드하지 않았거나 그 반대이면 어긋난 것이다.
 
-## 검증 상태 (2026-10-25)
+## 검증 상태 (2026-10-25, BLE 항목 2026-10-26)
+- BLE 업데이트: 클라우드 PlatformIO로 4개 ID 실빌드 성공(약 755 KB / 슬롯 1.25 MB), bin 태그·이름 확인, led_ota.exe 빌드 및 bin 읽기 확인. **실보드 BLE 연결/전송/재부팅, Windows 실행은 미확인.**
 - 확인: PC 시뮬레이션 4개 ID, PC 빌드(`dc27_frt_10`), 실보드 0x10(COM7) 스캔 OK + led_tester.exe 이펙트 전송.
 - 미확인: 0x11~0x13 실보드, LED 육안 결과, `F0 A5 5A` 다운로드 모드, 나머지 LED 펌웨어(kiosk_neo_rear, vision_buck_*, cxr_*)는 이 프로젝트에 미포함.
 
@@ -90,3 +106,4 @@ LGE_DC_27 프로젝트의 LED 컨트롤러 펌웨어(ESP32-C6 SuperMini, Platfor
 - 2026-10-24 (Claude 앱) — 작업 시작 전 "최종본 확인"(해시 비교)과 변경 후 갱신 규칙, 최종 파일 목록 추가. PC 폴더의 실제 파일 18개가 Claude 앱이 넣은 것과 모두 같음을 확인(VS Code 쪽 코드 변경 없음).
 - 2026-10-25 (Claude 앱) — (미기록 변경 반영) platformio.ini 해시가 목록과 달랐음: 10-24에 `[env:dc27_frt_10]`이 `-DDEVICE_ID=0x11`로 바뀌어 있던 것이 사용자에 의해 `0x10`으로 원복된 상태로 확인. 현재 4개 환경 모두 이름과 ID 일치, default_envs = dc27_frt_10.
 - 2026-10-25 (Claude 앱) — 전원 인가 표시 추가: 부팅 직후 스카이블루 디밍(0.5 s 업/0.5 s 다운), PC 첫 바이트 수신 시 소등. 고친 파일: src/main.cpp, src/neo_effect.cpp, src/neo_effect.h, src/neo_effect_config.h, src/colors.h, README.md. exe 변경 없음. 확인: PC 시뮬레이션 4개 ID(디밍 주기, 0x00 응답 1바이트 + 소등, 이후 이펙트·ID 요청 영향 없음). PlatformIO 실빌드는 Claude 앱 환경에서 못 함 → PC에서 빌드/실보드 확인 필요.
+- 2026-10-26 (Claude 앱, 사용자 요청) — BLE 무선 펌웨어 업데이트 추가: src/ble_ota.cpp/.h(NimBLE, 전원 인가 후 5분 광고, PIN 2727, 4 KB 블록+ACK, SHA-256·이미지·태그 종류/ID 검사, 롤백), config.h(FW_TYPE/FW_DESC/FW_VERSION/BLE_OTA_*), main.cpp(ble_ota_init/poll, ESP-IDF 로그 끔, 전송 중 소등, setup 끝에서 앱 유효 표시), platformio.ini(partitions=default.csv 고정, extra_scripts), tools/bin_copy.py(bin/LED_0x1x_v1.0.bin), tools/led_ota.exe + led_ota_src, README·docs. 확인: 4개 ID 클라우드 실빌드, bin 태그. 미확인: 실보드. 참고: platformio.ini의 `default_envs`가 기록(dc27_frt_10)과 달리 `dc27_frt_11`로 되어 있었음 — 손대지 않고 사용자에게 알림.

@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DC27 BLE 펌웨어 업데이트</title>
+<style>
+  :root { --bg:#f0f0f0; --panel:#ffffff; --line:#a0a0a0; --soft:#d9d9d9; --ink:#1a1a1a; --mute:#666;
+          --ok:#0a7d2c; --bad:#b42318; --warn:#b8860b; --acc:#1f5fbf; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:13px/1.4 "Segoe UI","Malgun Gothic",system-ui,sans-serif; }
+  .app { display:flex; flex-direction:column; height:100%; padding:10px 12px; gap:8px; }
+  .title { font-weight:700; font-size:18px; }
+  .sub { color:var(--mute); font-size:12px; margin-top:-4px; }
+  .bar { display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; }
+  button { font:inherit; padding:3px 12px; border:1px solid var(--line); background:linear-gradient(#fdfdfd,#e4e4e4); border-radius:3px; cursor:pointer; color:var(--ink); }
+  button:hover:not(:disabled) { background:linear-gradient(#fff,#ececec); border-color:#6d6d6d; }
+  button:disabled { color:#8a8a8a; background:#ececec; cursor:default; }
+  button.main { font-weight:700; padding:5px 18px; }
+  input[type=password], input[type=text] { font:inherit; border:1px solid var(--line); background:#fff; padding:2px 5px; border-radius:2px; width:110px; font-family:Consolas,monospace; }
+  fieldset { border:1px solid var(--soft); background:var(--panel); padding:6px 10px 8px; margin:0; min-width:0; }
+  legend { font-weight:600; padding:0 4px; color:#333; }
+  .mono { font-family:Consolas,monospace; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); } .mut { color:var(--mute); }
+  .grid { display:grid; grid-template-columns: 30px 1.6fr 70px 70px 90px 1.4fr; align-items:center; column-gap:8px; }
+  .gh { font-weight:700; padding:2px 0 4px; border-bottom:1px solid var(--soft); }
+  .row { padding:4px 0; border-bottom:1px solid #eee; cursor:pointer; }
+  .row.sel { background:#eaf1fb; }
+  .row > div { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .empty { color:var(--mute); padding:8px 2px; }
+  .devbox { max-height:34%; overflow:auto; }
+  .prog { height:18px; border:1px solid var(--line); background:#fff; border-radius:2px; overflow:hidden; flex:1; min-width:200px; }
+  .prog > div { height:100%; width:0; background:var(--acc); transition:width .2s; }
+  .logbox { flex:1; min-height:110px; display:flex; flex-direction:column; }
+  #log { flex:1; overflow-y:auto; background:#fff; border:1px solid var(--line); padding:4px 6px; font:12px/1.45 Consolas,monospace; white-space:pre-wrap; word-break:break-all; }
+  #log .e { color:var(--bad); } #log .g { color:var(--ok); }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="title">DC27 BLE 펌웨어 업데이트</div>
+  <div class="sub">보드 전원을 켠 뒤 5분 안에: ① bin 파일 선택 → ② 보드 찾기 → ③ 보드 선택 → ④ PIN 입력 → ⑤ 업데이트. USB 케이블과 BOOT 버튼은 필요 없습니다.</div>
+  <div id="btState" class="mut"></div>
+
+  <fieldset>
+    <legend>① 펌웨어 파일 (.bin)</legend>
+    <div class="bar">
+      <input type="file" id="file" accept=".bin">
+      <span id="binInfo" class="mut">선택된 파일 없음 (PlatformIO 빌드 후 프로젝트의 bin\LED_0x10_v1.0.bin 같은 파일)</span>
+    </div>
+  </fieldset>
+
+  <fieldset class="devbox">
+    <legend>② 보드</legend>
+    <div class="bar" style="margin-bottom:6px">
+      <button class="main" id="btnScan">보드 찾기</button>
+      <span id="scanState" class="mut"></span>
+    </div>
+    <div class="grid gh"><div></div><div>BLE 이름</div><div>종류</div><div>ID</div><div>신호</div><div>파일과 비교</div></div>
+    <div id="devs"><div class="empty">[보드 찾기]를 누르세요.</div></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>③ 업데이트</legend>
+    <div class="bar">
+      <label>PIN <input type="password" id="pin" autocomplete="off"></label>
+      <label title="ID 가 다른 bin 을 올려 보드의 ID 를 바꿀 때만 체크"><input type="checkbox" id="force"> ID 변경 허용</label>
+      <button class="main" id="btnUpd" disabled>업데이트</button>
+      <div class="prog"><div id="bar"></div></div>
+      <span id="pct" class="mono" style="min-width:44px">0%</span>
+    </div>
+  </fieldset>
+
+  <div class="logbox"><div id="log"></div></div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+let bin = null;          // {size, tagOK, tag:{type,id,ver}, esp}
+let devs = {};           // addr -> {name,type,id,rssi}
+let sel = null;
+let busy = false;
+
+function log(m, cls) {
+  const d = document.createElement('div');
+  if (cls) d.className = cls;
+  d.textContent = new Date().toTimeString().slice(0, 8) + '  ' + m;
+  $('log').appendChild(d);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+
+async function api(path, body, raw) {
+  const opt = { method: 'POST' };
+  if (raw) { opt.body = raw; } else if (body !== undefined) { opt.body = JSON.stringify(body); opt.headers = { 'Content-Type': 'application/json' }; }
+  const r = await fetch(path, opt);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+
+function cmp(d) {
+  if (!bin || !bin.tagOK) return '<span class="mut">-</span>';
+  if (d.type !== bin.tag.type) return '<span class="bad">종류 다름</span>';
+  if (d.id !== bin.tag.id) return '<span class="warn">ID 다름</span>';
+  return '<span class="ok">일치</span>';
+}
+
+function render() {
+  const keys = Object.keys(devs).sort((a, b) => devs[a].name.localeCompare(devs[b].name));
+  if (!keys.length) { $('devs').innerHTML = '<div class="empty">찾은 보드 없음</div>'; }
+  else {
+    $('devs').innerHTML = keys.map(k => {
+      const d = devs[k];
+      return `<div class="grid row${k === sel ? ' sel' : ''}" data-k="${k}">
+        <div><input type="radio" name="dv" ${k === sel ? 'checked' : ''}></div>
+        <div class="mono">${esc(d.name)}</div><div>${esc(d.type)}</div><div class="mono">${esc(d.id)}</div>
+        <div class="mono">${d.rssi} dBm</div><div>${cmp(d)}</div></div>`;
+    }).join('');
+    document.querySelectorAll('#devs .row').forEach(el => el.onclick = () => { sel = el.dataset.k; render(); });
+  }
+  $('btnUpd').disabled = busy || !sel || !bin || !bin.tagOK;
+  $('btnScan').disabled = busy;
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+$('file').onchange = async () => {
+  const f = $('file').files[0];
+  if (!f) return;
+  try {
+    bin = await api('/api/loadbin?name=' + encodeURIComponent(f.name), undefined, await f.arrayBuffer());
+    const kb = (bin.size / 1024).toFixed(0);
+    if (!bin.tagOK) {
+      $('binInfo').innerHTML = `<span class="bad">${esc(f.name)} (${kb} KB): DC27FW 태그 없음 - BLE 업데이트용 bin 이 아닙니다</span>`;
+    } else {
+      $('binInfo').innerHTML = `<b>${esc(f.name)}</b> &nbsp; ${esc(bin.tag.type)} ${esc(bin.tag.id)} v${esc(bin.tag.ver)} &nbsp; ${kb} KB` +
+        (bin.esp ? '' : ' <span class="bad">(ESP 이미지가 아님)</span>');
+    }
+    log(`파일: ${f.name} ${bin.size} 바이트` + (bin.tagOK ? `, ${bin.tag.type} ${bin.tag.id} v${bin.tag.ver}` : ', 태그 없음'), bin.tagOK ? '' : 'e');
+  } catch (e) { bin = null; $('binInfo').textContent = e.message; log(e.message, 'e'); }
+  render();
+};
+
+$('btnScan').onclick = async () => {
+  devs = {}; sel = null; render();
+  try { busy = true; render(); $('scanState').textContent = '찾는 중...'; await api('/api/scan', {}); }
+  catch (e) { busy = false; render(); $('scanState').textContent = ''; log(e.message, 'e'); }
+};
+
+$('btnUpd').onclick = async () => {
+  const d = devs[sel];
+  if (!d) return;
+  if (bin.tag.type !== d.type) { log(`보드 종류(${d.type})와 파일(${bin.tag.type})이 다릅니다.`, 'e'); return; }
+  if (bin.tag.id !== d.id && !$('force').checked) { log(`보드 ID(${d.id})와 파일 ID(${bin.tag.id})가 다릅니다. ID 를 바꾸려면 'ID 변경 허용'을 체크하세요.`, 'e'); return; }
+  try {
+    busy = true; render(); $('bar').style.width = '0'; $('pct').textContent = '0%';
+    await api('/api/update', { addr: sel, name: d.name, pin: $('pin').value, force: $('force').checked });
+  } catch (e) { busy = false; render(); log(e.message, 'e'); }
+};
+
+const es = new EventSource('/api/events');
+es.onmessage = ev => {
+  const m = JSON.parse(ev.data);
+  if (m.t === 'log') log(m.m);
+  else if (m.t === 'dev') { devs[m.addr] = m; if (!sel && bin && bin.tagOK && m.type === bin.tag.type && m.id === bin.tag.id) sel = m.addr; render(); }
+  else if (m.t === 'scan_done') { busy = false; $('scanState').textContent = `${m.n}대 찾음`; render(); }
+  else if (m.t === 'progress') { $('bar').style.width = m.pct + '%'; $('pct').textContent = m.pct + '%'; }
+  else if (m.t === 'done') {
+    busy = false; render();
+    if (m.ok) { $('bar').style.width = '100%'; $('pct').textContent = '100%'; log('업데이트 완료', 'g'); }
+    else log('업데이트 실패: ' + m.m, 'e');
+  }
+};
+
+fetch('/api/status').then(r => r.json()).then(s => {
+  $('btState').innerHTML = s.bt ? '' : `<span class="bad">이 PC 의 Bluetooth 를 사용할 수 없습니다: ${esc(s.err)} (설정에서 Bluetooth 를 켜세요)</span>`;
+});
+render();
+</script>
+</body>
+</html>

@@ -51,10 +51,19 @@ LED 방 작업의 기준 문서. 공통 사항은 `claude/system_common.md`, `cl
 - 이펙트 명령표는 `ui.html`의 `CMDS` / `FX` / `NEW_ID` 에 들어 있다 → **펌웨어 이펙트를 바꾸면 여기도 같이 고친다.**
 - 다시 빌드: `tools\led_tester_src`에서 `go build -ldflags "-H=windowsgui -s -w" -o ..\led_tester.exe .` (exe가 실행 중이면 파일이 잠기므로 창을 닫는다.)
 
+## 5-1. BLE 무선 펌웨어 업데이트 (2026-10-26)
+- 보드: `src/ble_ota.cpp/.h`. 전원 인가 후 5 분 동안 `LED 0x10 DC27_FRT` 이름으로 광고, PIN(`BLE_OTA_PIN`, 기본 2727, 3회 오류 시 잠김), 4 KB 블록 + ACK 전송, SHA-256 + ESP 이미지 검사 + bin 태그(`DC27FW|LED|0x10|1.0|`) 종류/ID 확인 후 OTA 슬롯 전환. 실패 시 기존 펌웨어 유지, 새 펌웨어가 setup() 전에 죽으면 롤백.
+- PC: `tools\led_ota.exe` (Go + Windows Bluetooth, 설치 불필요). bin 선택 → 보드 찾기 → 선택 → PIN → 업데이트.
+- 빌드하면 `bin\LED_0x1x_v<FW_VERSION>.bin` 자동 생성 (`tools/bin_copy.py`). 파일 이름은 자유, 확인은 bin 내부 태그로 한다.
+- BLE 이름 규칙 `<종류> 0x<ID> <설명>` 은 RF/SW/POWER 보드에도 같이 쓴다.
+- 처음 한 번은 USB 업로드 필요. USB 프로토콜·DEVICE_ID·eFuse 무음 부팅은 그대로.
+- 자세한 내용: README.md "BLE 무선 펌웨어 업데이트".
+
 ## 6. 검증 상태 (2026-10-25)
 - 확인: PC 시뮬레이션(가짜 Arduino/NeoPixel)으로 4개 ID — LED 수, ID 1바이트 응답, ID별 이펙트 구분/무시, OFF, 매직 바이트 소비. PC에서 `dc27_frt_10` 빌드 성공(`firmware.bin` 생성). **실보드 0x10 (COM7)**: led_tester.exe 스캔에서 ID 0x10, Note OK, Config FX1·f150x01·180 LEDs, 이펙트 명령 전송 동작.
 - 전원 인가 표시: PC 시뮬레이션 4개 ID 통과. **PC 빌드·실보드 육안 확인 전.**
 - **미확인**: 0x11~0x13 실보드, LED 육안 동작 결과, `F0 A5 5A` 다운로드 모드(공통 문서 §6과 동일하게 실보드 검증 전), led_tester.exe의 Auto-run·Enter bootloader 실사용.
+- BLE 업데이트(2026-10-26): 클라우드에서 4개 ID 실빌드 성공(약 755 KB / 1.25 MB), exe 빌드 + bin 태그 읽기 확인. **실보드 BLE 전송 확인 전.**
 - 나머지 LED 펌웨어(`kiosk_neo_rear`, `vision_buck_a/b/c`, `cxr_buck`, `cxr_puron`)는 이 통합 프로젝트에 아직 포함되지 않았다. 통합 대상/ID 배정은 미정.
 
 ## 7. 열린 항목
