@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RF 리모컨 검사 프로그램</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --ink: #1c2330; --muted: #667085; --line: #dfe3ea;
+    --ok: #12805c; --ok-bg: #e3f5ee; --warn: #b25e09; --warn-bg: #fdf1dc;
+    --bad: #b42318; --bad-bg: #fde8e6; --acc: #2457d6; --acc-bg: #e6eefc; --tile: #eef0f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --card: #1b2029; --ink: #e8ecf3; --muted: #98a2b3; --line: #2a303c;
+      --ok: #4cc79b; --ok-bg: #12332a; --warn: #f2b05a; --warn-bg: #3a2a10;
+      --bad: #ff8a80; --bad-bg: #3b1a17; --acc: #8fb0ff; --acc-bg: #1c2a4a; --tile: #232936;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 "Segoe UI", "Malgun Gothic", system-ui, sans-serif; }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 20px 16px 40px; }
+  h1 { font-size: 20px; margin: 0 0 2px; }
+  .sub { color: var(--muted); margin: 0 0 16px; font-size: 13px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+  .card h2 { font-size: 14px; margin: 0 0 10px; color: var(--muted); font-weight: 600; letter-spacing: .02em; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--tile); color: var(--ink);
+    padding: 7px 14px; border-radius: 7px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--acc); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--acc); color: #fff; border-color: var(--acc); }
+  input[type=text] { font: 14px ui-monospace, Consolas, monospace; width: 74px; padding: 6px 8px;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); }
+  label { display: inline-flex; gap: 6px; align-items: center; font-size: 14px; }
+  .chip { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 13px; font-weight: 600;
+    background: var(--tile); color: var(--muted); }
+  .chip.ok { background: var(--ok-bg); color: var(--ok); }
+  .chip.bad { background: var(--bad-bg); color: var(--bad); }
+  .chip.warn { background: var(--warn-bg); color: var(--warn); }
+  .chip.acc { background: var(--acc-bg); color: var(--acc); }
+  .checks { display: grid; gap: 8px; }
+  .check { display: flex; gap: 10px; align-items: baseline; }
+  .check .mark { width: 22px; text-align: center; font-weight: 700; }
+  .check .detail { color: var(--muted); font-size: 13px; }
+  .verdict { margin-top: 12px; padding: 10px 14px; border-radius: 8px; font-weight: 700; background: var(--tile); color: var(--muted); }
+  .verdict.ok { background: var(--ok-bg); color: var(--ok); }
+  .verdict.bad { background: var(--bad-bg); color: var(--bad); }
+  .keys { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  @media (max-width: 640px) { .keys { grid-template-columns: repeat(2, 1fr); } }
+  .key { background: var(--tile); border: 2px solid transparent; border-radius: 10px; padding: 10px 12px; transition: background .12s, border-color .12s; }
+  .key.flash-s { background: var(--ok-bg); border-color: var(--ok); }
+  .key.flash-l { background: var(--warn-bg); border-color: var(--warn); }
+  .key .name { font-weight: 700; font-size: 16px; }
+  .key .pair { display: flex; gap: 8px; margin-top: 6px; }
+  .tag { flex: 1; font-size: 12px; text-align: center; padding: 3px 4px; border-radius: 6px; background: var(--card); color: var(--muted); border: 1px solid var(--line); }
+  .tag.done { background: var(--ok-bg); color: var(--ok); border-color: transparent; font-weight: 700; }
+  .tag .n { font-variant-numeric: tabular-nums; }
+  #log { font: 12.5px/1.55 ui-monospace, Consolas, monospace; background: var(--tile); border-radius: 8px;
+    padding: 8px 10px; height: 220px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+  #log .e { color: var(--bad); } #log .w { color: var(--warn); } #log .g { color: var(--ok); } #log .m { color: var(--muted); }
+  .hint { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
+  .big { font: 700 26px ui-monospace, Consolas, monospace; }
+  .grow { flex: 1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>RF 리모컨 검사 프로그램</h1>
+  <p class="sub">ESP32-C6 SuperMini + CC1101 RF 8키 보드 · UART 115200 8N1 · 호스트 프로토콜(0x00 → DEVICE_ID, 키 뗄 때 인덱스 / 길게 = +0x80)</p>
+
+  <div class="card" id="unsupported" hidden>
+    <span class="chip bad">지원 안 됨</span>
+    이 브라우저는 Web Serial을 지원하지 않습니다. <b>Chrome 또는 Edge</b>에서 이 파일을 열어 주세요.
+  </div>
+
+  <div class="card">
+    <h2>1. 연결</h2>
+    <div class="row">
+      <button class="primary" id="btnConnect">포트 선택 · 연결</button>
+      <button id="btnDisconnect" disabled>연결 해제</button>
+      <span id="status" class="chip">연결 안 됨</span>
+      <span class="grow"></span>
+      <label>기대 ID <input type="text" id="expId" value="0x30" spellcheck="false"></label>
+      <label>키 개수 <input type="text" id="keyCount" value="8" style="width:44px" spellcheck="false"></label>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label><input type="checkbox" id="chkSig" checked> PC 프로그램처럼 포트를 열 때 DTR/RTS 신호를 켬 (보드 리셋 영향 확인)</label>
+    </div>
+    <div class="hint">연결하면 1초 대기하면서 수신 잡음(부팅 문구)을 확인한 뒤 <b>0x00</b>을 보내 ID를 읽습니다 — 검사용 EXE와 같은 순서입니다.</div>
+  </div>
+
+  <div class="card">
+    <h2>2. 검사 결과</h2>
+    <div class="checks">
+      <div class="check"><span class="mark" id="mId">·</span><div><b>DEVICE_ID 응답</b> <span class="big" id="idVal">--</span>
+        <div class="detail" id="idDetail">연결 후 자동으로 확인합니다.</div></div></div>
+      <div class="check"><span class="mark" id="mNoise">·</span><div><b>수신 잡음 없음</b> (부팅 문구가 ID로 읽히지 않는지)
+        <div class="detail" id="noiseDetail">연결 후 1초 동안 확인합니다.</div></div></div>
+      <div class="check"><span class="mark" id="mKeys">·</span><div><b>키 입력 확인</b> <span id="keyProg" class="chip">0 / 16</span>
+        <div class="detail">각 키를 <b>짧게</b>(0.6초 미만) 한 번, <b>길게</b>(0.6초 이상) 한 번 눌렀다 떼세요. 길게 = 0x80 비트.</div></div></div>
+      <div class="check"><span class="mark" id="mBad">·</span><div><b>잘못된 바이트 없음</b>
+        <div class="detail" id="badDetail">범위를 벗어난 값이 오면 여기에 표시됩니다.</div></div></div>
+    </div>
+    <div class="verdict" id="verdict">대기 중</div>
+    <div class="row" style="margin-top:10px">
+      <button id="btnReId" disabled>ID 다시 요청</button>
+      <button id="btnReset">결과 초기화</button>
+      <button id="btnCopy">로그 복사</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>3. 키 입력 (리모컨 키를 누르세요 — 뗄 때 값이 도착합니다)</h2>
+    <div class="keys" id="keys"></div>
+    <div class="hint">마지막 수신: <span id="last">없음</span></div>
+  </div>
+
+  <div class="card">
+    <h2>로그</h2>
+    <div id="log"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const MAX_KEYS = 16;
+  let port = null, reader = null, writer = null, running = false;
+  let phase = 'idle'; // idle | settle | await | monitor
+  let noise = [], idResp = null, idRequestedAt = 0, awaitTimer = null;
+  const keyState = []; // per key: {s:count, l:count}
+  let badBytes = [];
+  let idTimedOut = false;
+
+  const log = (msg, cls = '') => {
+    const t = new Date();
+    const ts = t.toTimeString().slice(0, 8) + '.' + String(t.getMilliseconds()).padStart(3, '0');
+    const d = document.createElement('div');
+    if (cls) d.className = cls;
+    d.textContent = ts + '  ' + msg;
+    const box = $('log');
+    box.appendChild(d);
+    while (box.childNodes.length > 400) box.removeChild(box.firstChild);
+    box.scrollTop = box.scrollHeight;
+  };
+  const hex = (b) => '0x' + b.toString(16).toUpperCase().padStart(2, '0');
+  const parseNum = (s) => { const v = parseInt(String(s).trim(), s.trim().toLowerCase().startsWith('0x') ? 16 : 10); return isNaN(v) ? null : v; };
+  const keyCount = () => Math.min(MAX_KEYS, Math.max(1, parseNum($('keyCount').value) || 8));
+  const expectedId = () => parseNum($('expId').value);
+
+  function setStatus(text, cls = '') { const s = $('status'); s.textContent = text; s.className = 'chip ' + cls; }
+  function mark(id, ok) {
+    const m = $(id);
+    if (ok === null) { m.textContent = '·'; m.style.color = ''; return; }
+    m.textContent = ok ? '✔' : '✘';
+    m.style.color = ok ? 'var(--ok)' : 'var(--bad)';
+  }
+
+  function buildKeys() {
+    const n = keyCount();
+    const box = $('keys');
+    box.innerHTML = '';
+    keyState.length = 0;
+    for (let i = 0; i < n; i++) {
+      keyState.push({ s: 0, l: 0 });
+      const el = document.createElement('div');
+      el.className = 'key'; el.id = 'key' + i;
+      el.innerHTML = `<div class="name">CH${i + 1} <span class="chip" style="font-weight:400">인덱스 ${i}</span></div>
+        <div class="pair"><div class="tag" id="ks${i}">짧게 <span class="n">0</span></div><div class="tag" id="kl${i}">길게 <span class="n">0</span></div></div>`;
+      box.appendChild(el);
+    }
+    updateProgress();
+  }
+
+  function updateProgress() {
+    const n = keyState.length;
+    let done = 0;
+    keyState.forEach((k, i) => {
+      if (k.s > 0) done++;
+      if (k.l > 0) done++;
+      $('ks' + i).className = 'tag' + (k.s > 0 ? ' done' : '');
+      $('ks' + i).querySelector('.n').textContent = k.s;
+      $('kl' + i).className = 'tag' + (k.l > 0 ? ' done' : '');
+      $('kl' + i).querySelector('.n').textContent = k.l;
+    });
+    const total = n * 2;
+    const kp = $('keyProg');
+    kp.textContent = `${done} / ${total}`;
+    kp.className = 'chip ' + (done === total ? 'ok' : done > 0 ? 'acc' : '');
+    mark('mKeys', done === total ? true : null);
+    updateVerdict();
+  }
+
+  function updateVerdict() {
+    const v = $('verdict');
+    const total = keyState.length * 2;
+    let done = 0; keyState.forEach(k => { if (k.s > 0) done++; if (k.l > 0) done++; });
+    const idOk = idResp !== null && idResp === expectedId();
+    const noiseOk = phase !== 'idle' && phase !== 'settle' ? noise.length === 0 : null;
+    const bad = badBytes.length > 0;
+    if (phase === 'monitor' && !bad) mark('mBad', true);
+    if (phase === 'idle' && idResp === null) { v.className = 'verdict'; v.textContent = '대기 중'; return; }
+    if (idTimedOut && idResp === null) { v.className = 'verdict bad'; v.textContent = '불합격 — ID 응답 없음 (펌웨어 / 포트 / 배선 확인)'; return; }
+    if (idResp !== null && !idOk) { v.className = 'verdict bad'; v.textContent = `불합격 — ID가 ${hex(idResp)} (기대 ${hex(expectedId() ?? 0)})`; return; }
+    if (noiseOk === false) { v.className = 'verdict bad'; v.textContent = `불합격 — 포트를 열 때 수신 잡음 ${noise.length}바이트`; return; }
+    if (bad) { v.className = 'verdict bad'; v.textContent = '불합격 — 범위를 벗어난 바이트 수신'; return; }
+    if (idOk && noiseOk && done === total) { v.className = 'verdict ok'; v.textContent = `합격 — ID ${hex(idResp)}, 잡음 없음, 키 ${total}/${total}`; return; }
+    v.className = 'verdict';
+    v.textContent = idOk ? `진행 중 — ID 정상, 키 ${done}/${total}` : '진행 중';
+  }
+
+  function onKeyByte(b) {
+    const idx = b & 0x7F, long = (b & 0x80) !== 0;
+    if (idx >= keyState.length) {
+      badBytes.push(b);
+      $('badDetail').textContent = `범위 밖: ${badBytes.map(hex).join(' ')} (키 인덱스 0..${keyState.length - 1} 만 정상)`;
+      mark('mBad', false);
+      log(`범위 밖 바이트 ${hex(b)}`, 'e');
+      updateVerdict();
+      return;
+    }
+    if (long) keyState[idx].l++; else keyState[idx].s++;
+    const el = $('key' + idx);
+    el.classList.remove('flash-s', 'flash-l');
+    void el.offsetWidth;
+    el.classList.add(long ? 'flash-l' : 'flash-s');
+    setTimeout(() => el.classList.remove('flash-s', 'flash-l'), 450);
+    $('last').textContent = `CH${idx + 1} ${long ? '길게' : '짧게'} (${hex(b)})`;
+    log(`CH${idx + 1}  ${long ? '길게 ' : '짧게 '} 바이트 ${hex(b)}`, 'g');
+    updateProgress();
+  }
+
+  function onBytes(chunk) {
+    for (const b of chunk) {
+      if (phase === 'settle') { noise.push(b); continue; }
+      if (phase === 'await') {
+        idResp = b;
+        clearTimeout(awaitTimer);
+        const dt = Math.round(performance.now() - idRequestedAt);
+        const ok = b === expectedId();
+        $('idVal').textContent = hex(b);
+        $('idDetail').textContent = ok ? `응답 ${dt} ms — 기대값과 일치` : `응답 ${dt} ms — 기대값 ${hex(expectedId() ?? 0)} 와 다름`;
+        $('idDetail').style.color = ok ? '' : 'var(--bad)';
+        mark('mId', ok);
+        log(`ID 응답 ${hex(b)} (${dt} ms)` + (ok ? '' : ' ← 기대값과 다름'), ok ? 'g' : 'e');
+        phase = 'monitor';
+        updateVerdict();
+        continue;
+      }
+      if (phase === 'monitor') onKeyByte(b);
+    }
+  }
+
+  async function requestId(label) {
+    if (!writer) return;
+    phase = 'await';
+    idResp = null; idTimedOut = false;
+    idRequestedAt = performance.now();
+    await writer.write(new Uint8Array([0x00]));
+    log(`${label}: 0x00 전송`, 'm');
+    clearTimeout(awaitTimer);
+    awaitTimer = setTimeout(() => {
+      if (phase === 'await') {
+        phase = 'monitor'; idTimedOut = true;
+        $('idVal').textContent = '--';
+        $('idDetail').textContent = '1.5초 안에 응답이 없습니다. (펌웨어/포트/배선 확인)';
+        $('idDetail').style.color = 'var(--bad)';
+        mark('mId', false);
+        log('ID 응답 없음 (1.5초)', 'e');
+        updateVerdict();
+      }
+    }, 1500);
+  }
+
+  async function readLoop() {
+    try {
+      while (running) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value && value.length) onBytes(value);
+      }
+    } catch (e) {
+      if (running) log('수신 오류: ' + e.message, 'e');
+    }
+  }
+
+  async function connect() {
+    try {
+      port = await navigator.serial.requestPort();
+      await port.open({ baudRate: 115200, dataBits: 8, stopBits: 1, parity: 'none', flowControl: 'none' });
+    } catch (e) {
+      log('포트를 열 수 없습니다: ' + e.message, 'e');
+      setStatus('연결 실패', 'bad');
+      port = null;
+      return;
+    }
+    if ($('chkSig').checked) {
+      try { await port.setSignals({ dataTerminalReady: true, requestToSend: true }); log('DTR/RTS 켬', 'm'); }
+      catch (e) { log('DTR/RTS 설정 실패: ' + e.message, 'w'); }
+    }
+    noise = []; idResp = null; badBytes = []; idTimedOut = false;
+    $('idVal').textContent = '--'; $('idDetail').textContent = '확인 중…'; $('idDetail').style.color = '';
+    mark('mId', null); mark('mNoise', null); mark('mBad', null);
+    $('noiseDetail').textContent = '1초 동안 수신 바이트를 확인합니다…';
+    $('badDetail').textContent = '범위를 벗어난 값이 오면 여기에 표시됩니다.';
+    buildKeys();
+    reader = port.readable.getReader();
+    writer = port.writable.getWriter();
+    running = true; phase = 'settle';
+    $('btnConnect').disabled = true; $('btnDisconnect').disabled = false; $('btnReId').disabled = false;
+    setStatus('연결됨 · 115200', 'ok');
+    log('포트 열림 — 1초 대기 (수신 잡음 확인)', 'm');
+    readLoop();
+    setTimeout(async () => {
+      if (phase !== 'settle') return;
+      const okNoise = noise.length === 0;
+      mark('mNoise', okNoise);
+      if (okNoise) { $('noiseDetail').textContent = '수신 바이트 없음 — 정상'; log('포트 열림 후 수신 잡음 없음', 'g'); }
+      else {
+        const asc = noise.map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '.').join('');
+        $('noiseDetail').textContent = `${noise.length}바이트 수신: ${noise.slice(0, 16).map(hex).join(' ')}${noise.length > 16 ? ' …' : ''}  "${asc.slice(0, 24)}"`;
+        $('noiseDetail').style.color = 'var(--bad)';
+        log(`수신 잡음 ${noise.length}바이트: "${asc}"`, 'e');
+      }
+      await requestId('ID 요청');
+      updateVerdict();
+    }, 1000);
+  }
+
+  async function disconnect() {
+    running = false; phase = 'idle';
+    clearTimeout(awaitTimer);
+    try { if (reader) { await reader.cancel(); reader.releaseLock(); } } catch (e) {}
+    try { if (writer) { writer.releaseLock(); } } catch (e) {}
+    try { if (port) await port.close(); } catch (e) {}
+    reader = writer = port = null;
+    $('btnConnect').disabled = false; $('btnDisconnect').disabled = true; $('btnReId').disabled = true;
+    setStatus('연결 안 됨');
+    log('연결 해제', 'm');
+  }
+
+  function resetResults() {
+    badBytes = [];
+    $('badDetail').textContent = '범위를 벗어난 값이 오면 여기에 표시됩니다.';
+    mark('mBad', null);
+    $('last').textContent = '없음';
+    buildKeys();
+    log('결과 초기화', 'm');
+  }
+
+  $('btnConnect').onclick = connect;
+  $('btnDisconnect').onclick = disconnect;
+  $('btnReId').onclick = () => { if (phase === 'monitor' || phase === 'await') requestId('ID 재요청'); };
+  $('btnReset').onclick = resetResults;
+  $('btnCopy').onclick = async () => {
+    const text = Array.from($('log').childNodes).map(n => n.textContent).join('\n');
+    try { await navigator.clipboard.writeText(text); log('로그를 클립보드에 복사했습니다', 'm'); }
+    catch (e) { log('복사 실패: ' + e.message, 'w'); }
+  };
+  $('keyCount').onchange = buildKeys;
+  $('expId').onchange = updateVerdict;
+  if (!('serial' in navigator)) { $('unsupported').hidden = false; $('btnConnect').disabled = true; }
+  buildKeys();
+  log('준비됨 — "포트 선택 · 연결"을 누르세요 (보드는 rfkey_host 펌웨어여야 합니다)', 'm');
+  window.__test = { onBytes, get phase() { return phase; } };
+})();
+</script>
+</body>
+</html>

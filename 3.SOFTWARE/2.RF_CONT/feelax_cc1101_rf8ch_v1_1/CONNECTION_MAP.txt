@@ -1,0 +1,32 @@
+FEELAX RF8CH v1.3 - ESP32-C6 SuperMini / CC1101 (E07-M1101D) / EV1527
+============================================================
+
+   EV1527 8-button REMOTE (433.92 MHz ASK/OOK)
+                   ))) wireless (((
+          CC1101 TRANSCEIVER / SMA ANTENNA
+             VCC(2) -------- ESP32-C6 3V3  (NOT 5V)
+             GND(1) -------- ESP32-C6 GND
+             SCK(5) -------- GPIO18
+             MISO(7)-------- GPIO19
+             MOSI(6)-------- GPIO20
+             CSN(4) -------- GPIO15  (right header; strapping + onboard LED pin; moved from GPIO21 pad)
+             GDO0(3)-------- GPIO14
+             GDO2(8)    X     NO CONNECTION
+
+           ESP32-C6 SUPERMINI
+       GPIO0  ------ [PAIR PUSHBUTTON NO] ------ GND
+       GPIO8  ------ [BUILT-IN WS2812 RGB LED]
+       GPIO17 ------ CH1, 3.3V HIGH (momentary=key hold / toggle=ON-OFF)
+       GPIO1  ------ CH2, 3.3V HIGH (momentary=key hold / toggle=ON-OFF)
+       GPIO2  ------ CH3, 3.3V HIGH (momentary=key hold / toggle=ON-OFF)
+       GPIO3  ------ CH4, 3.3V HIGH (momentary=key hold / toggle=ON-OFF)
+       GPIO4  ------ CH5, 3.3V HIGH (momentary=key hold / toggle=ON-OFF) (BOOT STRAP WARNING)
+       GPIO5  ------ CH6, 3.3V HIGH (momentary=key hold / toggle=ON-OFF) (BOOT STRAP WARNING)
+       GPIO6  ------ CH7, 3.3V HIGH (momentary=key hold / toggle=ON-OFF) (JTAG WARNING)
+       GPIO7  ------ CH8, 3.3V HIGH (momentary=key hold / toggle=ON-OFF) (JTAG WARNING)
+
+ CC1101 3V3-GND: optional 100nF + 10uF decoupling at RF module
+ GPIO output: 3.3V LOGIC ONLY, use buffers/drivers for loads.
+ Status LED requires NO external resistor or wiring.
+ GPIO12/13 RESERVED for USB. GPIO9 RESERVED for BOOT.
+ Host protocol: PC 0x00 -> DEVICE_ID(0x30); key release -> index 0..7 (+0x80 if held >= 600 ms)

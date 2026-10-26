@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LGE RF-KEY Tester for RF8CH</title>
+<style>
+  :root { --bg:#f0f0f0; --panel:#ffffff; --line:#a0a0a0; --soft:#d9d9d9; --ink:#1a1a1a; --mute:#666;
+          --ok:#0a7d2c; --bad:#b42318; --warn:#b8860b; --acc:#1f5fbf; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:13px/1.4 "Segoe UI","Malgun Gothic",system-ui,sans-serif; }
+  .app { display:flex; flex-direction:column; height:100%; padding:10px 12px; gap:8px; }
+  .title { font-weight:700; font-size:15px; }
+  .sub { color:var(--mute); font-size:12px; margin-top:-4px; }
+  .bar { display:flex; align-items:center; flex-wrap:wrap; gap:8px 14px; }
+  .bar .sp { flex:1; }
+  button { font:inherit; padding:3px 12px; border:1px solid var(--line); background:linear-gradient(#fdfdfd,#e4e4e4); border-radius:3px; cursor:pointer; color:var(--ink); }
+  button:hover:not(:disabled) { background:linear-gradient(#fff,#ececec); border-color:#6d6d6d; }
+  button:disabled { color:#8a8a8a; background:#ececec; cursor:default; }
+  button.scan { font-weight:700; padding:4px 16px; }
+  input[type=text], select { font:inherit; border:1px solid var(--line); background:#fff; padding:2px 5px; border-radius:2px; color:var(--ink); }
+  input[type=text] { width:64px; font-family:Consolas,monospace; }
+  select { min-width:190px; max-width:300px; }
+  fieldset { border:1px solid var(--soft); background:var(--panel); padding:6px 10px 8px; margin:0; min-width:0; }
+  legend { font-weight:600; padding:0 4px; color:#333; }
+  #status { color:var(--mute); }
+  /* device list */
+  .grid { display:grid; grid-template-columns: 110px 90px 1fr 1fr 250px; align-items:center; column-gap:10px; }
+  .gh { font-weight:700; padding:2px 0 4px; border-bottom:1px solid var(--soft); }
+  .row { padding:4px 0; border-bottom:1px solid #eee; cursor:pointer; }
+  .row.sel { background:#eaf1fb; }
+  .row > div { padding:0 2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .row > div:last-child { overflow:visible; }
+  .mono { font-family:Consolas,monospace; }
+  .st { display:inline-block; min-width:92px; }
+  .empty { color:var(--mute); padding:8px 2px; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); } .mut { color:var(--mute); }
+  /* test panel */
+  .checks { display:grid; grid-template-columns: 22px 1fr; row-gap:3px; }
+  .checks .m { font-weight:700; text-align:center; }
+  .checks .d { color:var(--mute); font-size:12px; }
+  .keys { display:grid; grid-template-columns: repeat(8, 1fr); gap:6px; margin-top:8px; }
+  .k { border:1px solid var(--soft); background:#fafafa; padding:4px 5px; text-align:center; border-radius:2px; transition:background .12s; }
+  .k b { display:block; }
+  .k .t { display:flex; gap:4px; margin-top:3px; font-size:11px; }
+  .k .t span { flex:1; padding:1px 0; border:1px solid var(--soft); background:#fff; color:var(--mute); }
+  .k .t span.done { background:#e3f5ea; color:var(--ok); border-color:#b9e0c7; font-weight:700; }
+  .k.fs { background:#d6f0de; } .k.fl { background:#fdeccc; }
+  .verdict { margin-top:8px; padding:6px 10px; border:1px solid var(--soft); background:#f4f4f4; font-weight:700; }
+  .verdict.ok { background:#e3f5ea; color:var(--ok); border-color:#b9e0c7; }
+  .verdict.bad { background:#fde8e6; color:var(--bad); border-color:#f3c1bb; }
+  .acts { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
+  /* log */
+  .logbox { flex:1; min-height:110px; display:flex; flex-direction:column; }
+  #log { flex:1; overflow-y:auto; background:#fff; border:1px solid var(--line); padding:4px 6px; font:12px/1.45 Consolas,monospace; white-space:pre-wrap; word-break:break-all; }
+  #log .e { color:var(--bad); } #log .g { color:var(--ok); } #log .w { color:var(--warn); }
+  .mid { flex:1; display:flex; flex-direction:column; gap:8px; min-height:0; }
+  .devbox { flex:0 0 auto; max-height:45%; overflow:auto; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="title">LGE RF-KEY Tester for RF8CH <span class="mut" style="font-weight:400">(RF 8-key board check, same port procedure as RF-KEY Receiver r3)</span></div>
+  <div class="sub">Same procedure as the PC receiver: open → DTR/RTS off → 1 s wait → read 10 bytes → send 0x00 → read 4 bytes (first byte = Device ID).</div>
+
+  <fieldset>
+    <legend>Scan</legend>
+    <div class="bar">
+      <label>Port <select id="portSel"></select></label>
+      <button id="btnRefresh" title="Reload the COM port list">↻</button>
+      <button class="scan" id="btnScan">SCAN DEVICES</button>
+      <span class="sp"></span>
+      <span id="status">Ready.</span>
+    </div>
+  </fieldset>
+
+  <div class="mid">
+    <fieldset class="devbox">
+      <legend>Devices</legend>
+      <div class="grid gh"><div>COM Port</div><div>Device ID</div><div>Note</div><div>Last Key</div><div>Port</div></div>
+      <div id="rows"><div class="empty">No device yet. Choose a port (or “All ports”) and press SCAN DEVICES.</div></div>
+    </fieldset>
+
+    <fieldset class="logbox">
+      <legend>Log:</legend>
+      <div class="bar" style="margin-bottom:4px"><button id="btnCopy">Copy log</button><button id="btnSave">Save log file</button></div>
+      <div id="log"></div>
+    </fieldset>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const hex = (b) => '0x' + b.toString(16).toUpperCase().padStart(2, '0');
+  const hexs = (a) => a.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(' ');
+  const num = (s) => { s = String(s).trim().toLowerCase(); const v = s.startsWith('0x') ? parseInt(s, 16) : parseInt(s, 10); return isNaN(v) ? null : v; };
+
+  const devs = new Map();   // port -> device record
+  let selected = null, scanning = false, scanTarget = '';
+
+  function log(msg, cls) {
+    const t = new Date();
+    const ts = t.toTimeString().slice(0, 8) + '.' + String(t.getMilliseconds()).padStart(3, '0');
+    const d = document.createElement('div');
+    if (cls) d.className = cls;
+    d.textContent = '[' + ts + '] ' + msg;
+    const box = $('log');
+    box.appendChild(d);
+    while (box.childNodes.length > 600) box.removeChild(box.firstChild);
+    box.scrollTop = box.scrollHeight;
+  }
+  const setStatus = (s) => { $('status').textContent = s; };
+
+  function newDev(port) {
+    return { port, id: null, open: false, busy: false, pre: [], resp: [], err: '', probed: false, last: '-' };
+  }
+  function resetKeys(d) { d.last = '-'; }
+
+  async function api(path, body) {
+    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    return j;
+  }
+
+  function noteText(d) {
+    if (!d.probed) return ['', ''];
+    if (!d.open && d.err) return ['Open failed', 'bad'];
+    if (d.resp.length < 1) return ['No ID response', 'bad'];
+    const stray = d.pre.length + Math.max(0, d.resp.length - 1);
+    if (stray) return ['Stray bytes (' + stray + ') — see log', 'bad'];
+    return ['OK', 'ok'];
+  }
+
+  /* ---------- rendering ---------- */
+  function renderRows() {
+    const box = $('rows');
+    if (!devs.size) { box.innerHTML = '<div class="empty">No device yet. Choose a port (or “All ports”) and press SCAN DEVICES.</div>'; return; }
+    box.innerHTML = '';
+    [...devs.values()].sort((a, b) => a.port.localeCompare(b.port, undefined, { numeric: true })).forEach(d => {
+      const row = document.createElement('div');
+      row.className = 'grid row' + (d.port === selected ? ' sel' : '');
+      const [ct, cc] = noteText(d);
+      const id = d.resp.length ? hex(d.resp[0]) : '-';
+      let st, sc;
+      if (d.busy) { st = 'Please wait...'; sc = 'warn'; }
+      else if (d.open) { st = 'Connected'; sc = 'ok'; }
+      else { st = 'Disconnected'; sc = 'mut'; }
+      row.innerHTML = `<div class="mono"></div><div class="mono"></div><div class="${cc}"></div><div class="mono"></div>
+        <div><span class="st ${sc}"></span><button class="tog"></button></div>`;
+      const c = row.children;
+      c[0].textContent = d.port; c[1].textContent = id; c[2].textContent = ct; c[3].textContent = d.last;
+      c[4].querySelector('.st').textContent = st;
+      const b = c[4].querySelector('button');
+      b.textContent = d.busy ? 'Please wait' : (d.open ? 'Disconnect' : 'Connect');
+      b.disabled = d.busy;
+      b.onclick = (ev) => { ev.stopPropagation(); toggle(d); };
+      row.onclick = () => { selected = d.port; render(); };
+      box.appendChild(row);
+    });
+  }
+
+  function render() { renderRows(); $('btnScan').disabled = scanning; }
+
+  /* ---------- actions ---------- */
+  async function loadPorts() {
+    const sel = $('portSel'); const prev = sel.value;
+    try {
+      const list = await (await fetch('/api/ports')).json();
+      sel.innerHTML = '';
+      const all = document.createElement('option'); all.value = ''; all.textContent = 'All ports'; sel.appendChild(all);
+      list.forEach(p => { const o = document.createElement('option'); o.value = p.name; o.textContent = p.name + (p.desc ? '  ' + p.desc : ''); sel.appendChild(o); });
+      if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+    } catch (e) { log('Port list failed: ' + e.message, 'e'); }
+  }
+
+  async function scan() {
+    if (scanning) return;
+    scanning = true; render();
+    const port = $('portSel').value;
+    scanTarget = port;
+    if (!port) { devs.clear(); selected = null; }
+    setStatus('Scanning serial ports...');
+    try { await api('/api/scan', { port }); }
+    catch (e) { log('Scan failed: ' + e.message, 'e'); scanning = false; setStatus('Scan failed.'); render(); }
+  }
+
+  async function toggle(d) {
+    if (d.open) {
+      try { await api('/api/disconnect', { port: d.port }); } catch (e) { log('Disconnect failed: ' + e.message, 'e'); }
+    } else {
+      d.busy = true; render();
+      try { await api('/api/connect', { port: d.port }); }
+      catch (e) { d.busy = false; log('Connect failed: ' + e.message, 'e'); render(); }
+    }
+  }
+
+  function onKeyByte(d, b) {
+    const idx = b & 0x7F, long = (b & 0x80) !== 0;
+    const type = long ? 'LONG' : 'SHORT';
+    log('[KEY] COM=' + d.port + ' ID=' + (d.resp.length ? hex(d.resp[0]) : '--') + ' idx=' + idx + ' type=' + type + ' raw=' + hex(b), 'g');
+    d.last = 'idx=' + idx + ', ' + type[0] + ', ' + hex(b);
+    render();
+  }
+
+  function startEvents() {
+    const es = new EventSource('/api/events');
+    es.onmessage = (ev) => {
+      let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (m.t === 'log') log(m.m);
+      else if (m.t === 'device') {
+        let d = devs.get(m.port);
+        if (!d) { if (scanTarget === '' && !(m.resp || []).length) return; d = newDev(m.port); devs.set(m.port, d); }
+        d.busy = false; d.open = !!m.open; d.err = m.err || ''; d.pre = m.pre || []; d.resp = m.resp || []; d.probed = true;
+        resetKeys(d);
+        if (!selected || scanning === false || d.resp.length) selected = m.port;
+        render();
+      } else if (m.t === 'rx') { const d = devs.get(m.port); if (d) onKeyByte(d, m.b); }
+      else if (m.t === 'closed') { const d = devs.get(m.port); if (d) { d.open = false; d.busy = false; render(); } }
+      else if (m.t === 'readerr') { log('[ERROR] Read error on ' + m.port + ': ' + m.err, 'e'); const d = devs.get(m.port); if (d) { d.open = false; render(); } }
+      else if (m.t === 'scan_done') {
+        scanning = false;
+        const found = [...devs.values()].filter(d => d.resp.length).length;
+        log('Scan complete. ' + found + ' device(s) found.');
+        setStatus('Scan complete. ' + found + ' device(s) found.');
+        render();
+      }
+    };
+  }
+
+  $('btnScan').onclick = scan;
+  $('btnRefresh').onclick = loadPorts;
+  $('btnCopy').onclick = async () => {
+    const text = Array.from($('log').childNodes).map(n => n.textContent).join('\n');
+    try { await navigator.clipboard.writeText(text); log('Log copied to the clipboard'); } catch (e) { log('Copy failed: ' + e.message, 'w'); }
+  };
+  $('btnSave').onclick = async () => {
+    const text = Array.from($('log').childNodes).map(n => n.textContent).join('\n');
+    try { const r = await api('/api/savelog', { text }); log('Log saved: ' + r.path); } catch (e) { log('Save failed: ' + e.message, 'w'); }
+  };
+  startEvents(); loadPorts(); render();
+  log('Application started. Choose a port (or All ports) and press SCAN DEVICES. The board must run the rfkey_host firmware; close any other program using the COM port.');
+})();
+</script>
+</body>
+</html>
