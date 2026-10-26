@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LGE LED Tester for DC27_FRT</title>
+<style>
+  :root { --bg:#f0f0f0; --panel:#ffffff; --line:#a0a0a0; --soft:#d9d9d9; --ink:#1a1a1a; --mute:#666;
+          --ok:#0a7d2c; --bad:#b42318; --warn:#b8860b; --acc:#1f5fbf; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:13px/1.4 "Segoe UI","Malgun Gothic",system-ui,sans-serif; }
+  .app { display:flex; flex-direction:column; height:100%; padding:10px 12px; gap:8px; }
+  .title { font-weight:700; font-size:18px; }
+  .sub { color:var(--mute); font-size:12px; margin-top:-4px; }
+  .bar { display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; }
+  .bar .sp { flex:1; }
+  button { font:inherit; padding:3px 12px; border:1px solid var(--line); background:linear-gradient(#fdfdfd,#e4e4e4); border-radius:3px; cursor:pointer; color:var(--ink); }
+  button:hover:not(:disabled) { background:linear-gradient(#fff,#ececec); border-color:#6d6d6d; }
+  button:disabled { color:#8a8a8a; background:#ececec; cursor:default; }
+  button.scan { font-weight:700; padding:4px 16px; }
+  button.danger { border-color:#c9867f; }
+  input[type=text], select { font:inherit; border:1px solid var(--line); background:#fff; padding:2px 5px; border-radius:2px; color:var(--ink); }
+  input[type=text] { width:64px; font-family:Consolas,monospace; }
+  select { min-width:190px; max-width:300px; }
+  fieldset { border:1px solid var(--soft); background:var(--panel); padding:6px 10px 8px; margin:0; min-width:0; }
+  legend { font-weight:600; padding:0 4px; color:#333; }
+  #status { color:var(--mute); }
+  /* device list (columns follow the PC lighting program: Sel / COM Port / Device ID / ... / Effect / Send / Last Effect / Port) */
+  .grid { display:grid; grid-template-columns: 34px 92px 76px 150px 1.2fr 150px 1fr 232px; align-items:center; column-gap:8px; }
+  .gh { font-weight:700; padding:2px 0 4px; border-bottom:1px solid var(--soft); }
+  .row { padding:4px 0; border-bottom:1px solid #eee; cursor:pointer; }
+  .row.sel { background:#eaf1fb; }
+  .row > div { padding:0 2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .row > div.ov { overflow:visible; }
+  .row input.eff { width:52px; text-align:center; }
+  .row .eff-cell { display:flex; gap:5px; align-items:center; }
+  .mono { font-family:Consolas,monospace; }
+  .st { display:inline-block; min-width:84px; }
+  .empty { color:var(--mute); padding:8px 2px; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); } .mut { color:var(--mute); }
+  /* effect command table */
+  .efhead { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; margin-bottom:6px; }
+  .efhead .tgt { font-weight:600; }
+  .efgrid { display:grid; grid-template-columns: repeat(8, 1fr); gap:5px; }
+  .cmd { display:flex; align-items:center; gap:6px; text-align:left; padding:3px 6px; min-width:0; }
+  .cmd .sw { flex:0 0 14px; height:14px; border-radius:3px; border:1px solid rgba(0,0,0,.35); }
+  .cmd .tx { min-width:0; line-height:1.15; }
+  .cmd .tx b { display:block; font-family:Consolas,monospace; }
+  .cmd .tx small { display:block; color:var(--mute); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .cmd.na { opacity:.45; border-style:dashed; }
+  .cmd.cur { outline:2px solid var(--acc); outline-offset:-1px; }
+  .cmd.run { background:#fff3c4; }
+  /* bottom send bar */
+  .sendbar { display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; }
+  .sendbar .hint { color:var(--mute); font-family:Consolas,monospace; min-width:70px; }
+  /* log */
+  .logbox { flex:1; min-height:110px; display:flex; flex-direction:column; }
+  #log { flex:1; overflow-y:auto; background:#fff; border:1px solid var(--line); padding:4px 6px; font:12px/1.45 Consolas,monospace; white-space:pre-wrap; word-break:break-all; }
+  #log .e { color:var(--bad); } #log .g { color:var(--ok); } #log .w { color:var(--warn); }
+  .mid { flex:1; display:flex; flex-direction:column; gap:8px; min-height:0; }
+  .devbox { flex:0 0 auto; max-height:26%; overflow:auto; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="title">LGE LED Tester for DC27_FRT <span class="mut" style="font-weight:400;font-size:12px">(LED board check, same port procedure as the PC lighting program)</span></div>
+  <div class="sub">Open → DTR/RTS off → 1 s wait → read 10 bytes → send 0x00 → read 4 bytes (first byte = Device ID). Then effect commands 0x01~0x28 can be sent.</div>
+
+  <div class="bar">
+    <button class="scan" id="btnScan">SCAN DEVICES</button>
+    <button id="btnClose">CLOSE PORTS</button>
+    <label>Port <select id="portSel"></select></label>
+    <button id="btnRefresh" title="Reload the COM port list">↻</button>
+    <span id="status">Ready.</span>
+  </div>
+
+  <div class="mid">
+    <fieldset class="devbox">
+      <legend>Devices</legend>
+      <div class="grid gh"><div>Sel</div><div>COM Port</div><div>Device ID</div><div>Note</div><div>Config</div><div>Effect</div><div>Last Effect</div><div>Port</div></div>
+      <div id="rows"><div class="empty">No device yet. Choose a port (or “All ports”) and press SCAN DEVICES.</div></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Effect commands</legend>
+      <div class="efhead">
+        <span class="tgt" id="efTarget">No device selected.</span>
+        <span class="sp" style="flex:1"></span>
+        <label>Auto-run every <input type="text" id="autoSec" value="4" style="width:34px;text-align:center"> s</label>
+        <button id="btnAuto">Auto-run valid effects</button>
+      </div>
+      <div class="efgrid" id="efgrid"></div>
+    </fieldset>
+
+    <div class="sendbar">
+      <label>Effect: <input type="text" id="effAll" value="" placeholder="hex: 03" style="width:92px"></label>
+      <span class="hint" id="effAllHint"></span>
+      <button id="btnSendSel">Send to Selected</button>
+      <button id="btnSendAll">Send to All connected</button>
+      <span class="sp" style="flex:1"></span>
+      <button id="btnId" title="Send 0x00 and check the 1-byte answer">ID request (0x00)</button>
+      <button id="btnBoot" class="danger" title="Send 0xF0 0xA5 0x5A: the board reboots into ROM download mode">Enter bootloader (F0 A5 5A)</button>
+    </div>
+
+    <fieldset class="logbox">
+      <legend>Log:</legend>
+      <div class="bar" style="margin-bottom:4px"><button id="btnCopy">Copy log</button><button id="btnSave">Save log file</button></div>
+      <div id="log"></div>
+    </fieldset>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const hex = (b) => '0x' + b.toString(16).toUpperCase().padStart(2, '0');
+  const hexs = (a) => a.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(' ');
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  /* ---------- what the firmware knows (src/config.h, src/neo_effect.cpp of DC27_FRT / last year's kiosk_neo_frt) ---------- */
+  // FX type = last year's DEVICE_ID value (0x01~0x04); new DEVICE_ID 0x10~0x13 map to it in order.
+  const FX = { 1: { name: 'f150x01', leds: 180 }, 2: { name: 'f180x02', leds: 180 }, 3: { name: 'f180x03', leds: 150 }, 4: { name: 'f8x04', leds: 8 } };
+  const NEW_ID = { 0x10: 1, 0x11: 2, 0x12: 3, 0x13: 4 };
+  const OLD_ID = { 0x01: 1, 0x02: 2, 0x03: 3, 0x04: 4 };
+  function cfgOf(id) {
+    if (id in NEW_ID) return { type: NEW_ID[id], legacy: false };
+    if (id in OLD_ID) return { type: OLD_ID[id], legacy: true };
+    return null;
+  }
+
+  const CMDS = [];
+  function def(c, n, rgb, spec) {
+    const kinds = {};
+    if (typeof spec === 'string') [1, 2, 3, 4].forEach(t => kinds[t] = spec);
+    else for (const k in spec) k.split(',').forEach(t => kinds[+t] = spec[k]);
+    CMDS[c] = { c, n, rgb, kinds };
+  }
+  const SAME = { '1,2': 'fade', '3': 'TINDLE env', '4': 'fade-hold-out' };
+  def(0x01, 'OFF', null, 'off');
+  def(0x02, 'CMD_03', [255, 235, 247], { '1,2,3': 'static', '4': 'breath' });
+  def(0x03, 'CMD_03', [255, 235, 247], 'fade');
+  def(0x04, 'CMD_04', [237, 125, 49], 'fade');
+  def(0x05, 'CMD_05', [222, 235, 247], 'fade');
+  def(0x06, 'OFF', null, 'off');
+  def(0x07, 'FIRE', [255, 90, 15], { '1,2,4': 'fade', '3': 'FIRE env' });
+  def(0x08, 'SUNSET', [255, 90, 15], SAME);
+  def(0x09, 'FOREST', [30, 180, 40], SAME);
+  def(0x0A, 'LAKE', [50, 150, 70], SAME);
+  def(0x0B, 'CMD_0B', [63, 189, 255], 'fade');
+  def(0x0C, 'CMD_0C', [254, 243, 196], 'fade');
+  def(0x0D, 'CMD_0D', [63, 189, 255], 'fade');
+  def(0x0E, 'CMD_0E', [244, 177, 131], 'fade');
+  def(0x0F, 'CMD_0F', [244, 177, 131], 'fade');
+  def(0x10, 'unused', null, {});
+  def(0x11, 'CMD_11', [243, 203, 196], { '3': 'fade' });
+  def(0x12, 'MUSIC', [255, 235, 247], { '3': 'breath' });
+  def(0x13, 'SEQ 13', [255, 235, 247], { '4': 'ring' });
+  def(0x14, 'SEQ 14', [255, 235, 247], { '4': 'group' });
+  def(0x15, 'SEQ 15', [255, 235, 247], { '4': 'cumulative' });
+  def(0x16, 'CMD_16', [14, 229, 97], { '1,2': 'blink' });
+  def(0x17, 'CMD_17', [251, 243, 7], { '1,2': 'blink' });
+  def(0x18, 'CMD_18', [255, 0, 0], { '1,2': 'blink' });
+  def(0x19, 'CMD_19', [255, 195, 0], { '1,2': 'blink' });
+  def(0x1A, 'CMD_1A', [23, 203, 253], { '1,2': 'static' });
+  def(0x1B, 'CMD_1B', [145, 202, 117], { '3': 'static' });
+  def(0x1C, 'CMD_1C', [243, 90, 60], { '3': 'blink' });
+  def(0x1D, 'CMD_1D', [202, 117, 201], { '3': 'blink' });
+  def(0x1E, 'CMD_1E', [249, 134, 34], { '3': 'static' });
+  def(0x1F, 'CMD_1F', [92, 201, 188], { '3': 'static' });
+  def(0x20, 'CMD_20', [178, 46, 202], { '3': 'static' });
+  def(0x21, 'CMD_21', [171, 71, 225], { '3': 'blink' });
+  def(0x22, 'CMD_22', [255, 195, 0], { '3': 'static' });
+  def(0x23, 'CMD_23', [218, 153, 239], { '1,2': 'static' });
+  def(0x24, 'CMD_23', [218, 153, 239], { '1,2': 'blink' });
+  def(0x25, 'CMD_25', [14, 183, 229], { '1,2': 'blink' });
+  def(0x26, 'CMD_26', [111, 237, 244], { '3': 'static' });
+  def(0x27, 'CMD_27', [255, 195, 0], { '3': 'blink' });
+  def(0x28, 'GRADIENT', 'grad', 'flow');
+  const CMD_LIST = CMDS.filter(Boolean);
+
+  const devs = new Map();   // port -> device record
+  let focus = null, scanning = false, scanTarget = '', auto = null;
+
+  function log(msg, cls) {
+    const t = new Date();
+    const ts = t.toTimeString().slice(0, 8) + '.' + String(t.getMilliseconds()).padStart(3, '0');
+    const d = document.createElement('div');
+    if (cls) d.className = cls;
+    d.textContent = '[' + ts + '] ' + msg;
+    const box = $('log');
+    box.appendChild(d);
+    while (box.childNodes.length > 800) box.removeChild(box.firstChild);
+    box.scrollTop = box.scrollHeight;
+  }
+  const setStatus = (s) => { $('status').textContent = s; };
+
+  function newDev(port) {
+    return { port, id: null, open: false, busy: false, pre: [], resp: [], err: '', probed: false, last: '-', sel: true, eff: '01', wait: null };
+  }
+  const idOf = (d) => d.resp.length ? d.resp[0] : null;
+  const typeOf = (d) => { const i = idOf(d); const c = i === null ? null : cfgOf(i); return c ? c.type : null; };
+
+  async function api(path, body) {
+    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    return j;
+  }
+
+  /* "03", "0x03", "1B" → 0x03 / 0x1B (hex, like the command list in the firmware) */
+  function parseEff(s) {
+    s = String(s).trim().toLowerCase().replace(/^0x/, '');
+    if (!/^[0-9a-f]{1,2}$/.test(s)) return null;
+    return parseInt(s, 16);
+  }
+  const cmdText = (c) => CMDS[c] ? CMDS[c].n : '';
+
+  function noteText(d) {
+    if (!d.probed) return ['', ''];
+    if (!d.open && d.err) return ['Open failed', 'bad'];
+    if (d.resp.length < 1) return ['No ID response', 'bad'];
+    const stray = d.pre.length + Math.max(0, d.resp.length - 1);
+    if (stray) return ['Stray bytes (' + stray + ') — see log', 'bad'];
+    return ['OK', 'ok'];
+  }
+  function cfgText(d) {
+    const id = idOf(d);
+    if (id === null) return ['-', 'mut'];
+    const c = cfgOf(id);
+    if (!c) return ['Unknown ID (expected 0x10~0x13)', 'warn'];
+    const f = FX[c.type];
+    const base = 'FX' + c.type + ' · ' + f.name + ' · ' + f.leds + ' LEDs';
+    return c.legacy ? ['legacy ID → ' + base, 'warn'] : [base, 'ok'];
+  }
+
+  /* ---------- rendering ---------- */
+  function renderRows() {
+    const box = $('rows');
+    // keep typing focus across re-renders
+    const ae = document.activeElement;
+    const keep = ae && ae.classList && ae.classList.contains('eff') ? { port: ae.dataset.port, pos: ae.selectionStart } : null;
+    if (!devs.size) { box.innerHTML = '<div class="empty">No device yet. Choose a port (or “All ports”) and press SCAN DEVICES.</div>'; return; }
+    box.innerHTML = '';
+    [...devs.values()].sort((a, b) => a.port.localeCompare(b.port, undefined, { numeric: true })).forEach(d => {
+      const row = document.createElement('div');
+      row.className = 'grid row' + (d.port === focus ? ' sel' : '');
+      const [nt, nc] = noteText(d);
+      const [ct, cc] = cfgText(d);
+      const id = idOf(d) === null ? '-' : hex(idOf(d));
+      let st, sc;
+      if (d.busy) { st = 'Please wait...'; sc = 'warn'; }
+      else if (d.open) { st = 'Connected'; sc = 'ok'; }
+      else { st = 'Disconnected'; sc = 'mut'; }
+      row.innerHTML = `<div class="ov"><input type="checkbox" class="sel"></div><div class="mono"></div><div class="mono"></div><div class="${nc}"></div><div class="${cc}"></div>
+        <div class="ov eff-cell"><input type="text" class="eff"><button class="snd">Send</button></div><div class="mono"></div>
+        <div class="ov"><span class="st ${sc}"></span><button class="tog"></button></div>`;
+      const c = row.children;
+      const cb = c[0].querySelector('input');
+      cb.checked = d.sel; cb.onclick = (ev) => { ev.stopPropagation(); d.sel = cb.checked; };
+      c[1].textContent = d.port; c[2].textContent = id; c[3].textContent = nt; c[4].textContent = ct; c[4].title = ct;
+      const inp = c[5].querySelector('input'); inp.value = d.eff; inp.dataset.port = d.port;
+      inp.onclick = (ev) => ev.stopPropagation();
+      inp.oninput = () => { d.eff = inp.value; };
+      inp.onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); sendEffect(d, d.eff); } };
+      const sb = c[5].querySelector('button'); sb.disabled = !d.open || d.busy;
+      sb.onclick = (ev) => { ev.stopPropagation(); sendEffect(d, d.eff); };
+      c[6].textContent = d.last;
+      c[7].querySelector('.st').textContent = st;
+      const b = c[7].querySelector('button');
+      b.textContent = d.busy ? 'Please wait' : (d.open ? 'Disconnect' : 'Connect');
+      b.disabled = d.busy;
+      b.onclick = (ev) => { ev.stopPropagation(); toggle(d); };
+      row.onclick = () => { focus = d.port; render(); };
+      box.appendChild(row);
+    });
+    if (keep) {
+      const el = box.querySelector('input.eff[data-port="' + keep.port + '"]');
+      if (el) { el.focus(); try { el.setSelectionRange(keep.pos, keep.pos); } catch (e) {} }
+    }
+  }
+
+  function focusDev() { return focus ? devs.get(focus) : null; }
+
+  function renderEffects() {
+    const d = focusDev();
+    const grid = $('efgrid');
+    const type = d ? typeOf(d) : null;
+    let tgt = 'No device selected. Click a device row.';
+    if (d) {
+      const id = idOf(d);
+      tgt = 'Target: ' + d.port + ' · ID ' + (id === null ? '-' : hex(id)) + (type ? ' · FX' + type + ' ' + FX[type].name + ' · ' + FX[type].leds + ' LEDs' : ' · (config unknown: all commands enabled)') + (d.open ? '' : ' · not connected');
+    }
+    $('efTarget').textContent = tgt;
+    grid.innerHTML = '';
+    const cur = d ? parseEff(d.eff) : null;
+    CMD_LIST.forEach(cm => {
+      const valid = type ? (type in cm.kinds) : true;
+      const b = document.createElement('button');
+      b.className = 'cmd' + (valid ? '' : ' na') + (cm.c === cur ? ' cur' : '') + (auto && auto.c === cm.c ? ' run' : '');
+      let sw = '<span class="sw" style="background:#fff"></span>';
+      if (cm.rgb === 'grad') sw = '<span class="sw" style="background:linear-gradient(90deg,#ff312e,#e51dee,#b432f5,#8227ff)"></span>';
+      else if (cm.rgb) sw = '<span class="sw" style="background:rgb(' + cm.rgb.join(',') + ')"></span>';
+      else if (cm.kinds[1] === 'off') sw = '<span class="sw" style="background:#000"></span>';
+      const kind = type ? (valid ? cm.kinds[type] : '—') : (Object.values(cm.kinds)[0] || '—');
+      b.innerHTML = sw + '<span class="tx"><b></b><small></small></span>';
+      b.querySelector('b').textContent = hex(cm.c);
+      b.querySelector('small').textContent = cm.n + ' · ' + kind;
+      b.title = hex(cm.c) + ' ' + cm.n + (type ? (valid ? ' — this ID: ' + kind : ' — not defined for this ID (the board should ignore it)') : '');
+      b.disabled = !d || !d.open || d.busy;
+      b.onclick = () => { d.eff = cm.c.toString(16).toUpperCase().padStart(2, '0'); sendEffect(d, d.eff); };
+      grid.appendChild(b);
+    });
+  }
+
+  function render() {
+    renderRows(); renderEffects();
+    $('btnScan').disabled = scanning;
+    const d = focusDev();
+    const openAny = [...devs.values()].some(x => x.open);
+    $('btnSendSel').disabled = ![...devs.values()].some(x => x.open && x.sel);
+    $('btnSendAll').disabled = !openAny;
+    $('btnId').disabled = !(d && d.open);
+    $('btnBoot').disabled = !(d && d.open);
+    $('btnAuto').disabled = !auto && !(d && d.open);
+    $('btnAuto').textContent = auto ? 'Stop auto-run' : 'Auto-run valid effects';
+    $('btnClose').disabled = !openAny;
+    const v = parseEff($('effAll').value);
+    $('effAllHint').textContent = $('effAll').value.trim() === '' ? '' : (v === null ? '(invalid)' : '→ ' + hex(v) + ' ' + cmdText(v));
+  }
+
+  /* ---------- actions ---------- */
+  async function loadPorts() {
+    const sel = $('portSel'); const prev = sel.value;
+    try {
+      const list = await (await fetch('/api/ports')).json();
+      sel.innerHTML = '';
+      const all = document.createElement('option'); all.value = ''; all.textContent = 'All ports'; sel.appendChild(all);
+      list.forEach(p => { const o = document.createElement('option'); o.value = p.name; o.textContent = p.name + (p.desc ? '  ' + p.desc : ''); sel.appendChild(o); });
+      if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+    } catch (e) { log('Port list failed: ' + e.message, 'e'); }
+  }
+
+  async function scan() {
+    if (scanning) return;
+    stopAuto();
+    scanning = true; render();
+    const port = $('portSel').value;
+    scanTarget = port;
+    if (!port) { devs.clear(); focus = null; }
+    setStatus('Scanning serial ports...');
+    try { await api('/api/scan', { port }); }
+    catch (e) { log('Scan failed: ' + e.message, 'e'); scanning = false; setStatus('Scan failed.'); render(); }
+  }
+
+  async function toggle(d) {
+    if (d.open) {
+      if (auto) stopAuto();
+      try { await api('/api/disconnect', { port: d.port }); } catch (e) { log('Disconnect failed: ' + e.message, 'e'); }
+    } else {
+      d.busy = true; render();
+      try { await api('/api/connect', { port: d.port }); }
+      catch (e) { d.busy = false; log('Connect failed: ' + e.message, 'e'); render(); }
+    }
+  }
+
+  async function sendBytes(d, bytes) {
+    await api('/api/send', { port: d.port, bytes });
+  }
+
+  async function sendEffect(d, text, quiet) {
+    if (!d.open) { log('Send: ' + d.port + ' is not connected.', 'w'); return false; }
+    const v = parseEff(text);
+    if (v === null) { log('Invalid effect value "' + String(text).trim() + '" (use hex, e.g. 03 or 0x1B).', 'w'); return false; }
+    if (v === 0) { log('0x00 is the ID request, not an effect. Use the ID request button.', 'w'); return false; }
+    const type = typeOf(d);
+    const cm = CMDS[v];
+    let note = '';
+    if (type && (!cm || !(type in cm.kinds))) note = '  (not defined for ' + FX[type].name + ' → the board should ignore it)';
+    else if (cm && type) note = '  (' + cm.n + ' · ' + cm.kinds[type] + ')';
+    try {
+      await sendBytes(d, [v]);
+      d.last = hex(v) + (cm ? ' ' + cm.n : '');
+      log('[TX] COM=' + d.port + ' ID=' + (idOf(d) === null ? '--' : hex(idOf(d))) + ' effect=' + hex(v) + note, note.includes('ignore') ? 'w' : 'g');
+      render();
+      return true;
+    } catch (e) { log('[ERROR] Send to ' + d.port + ' failed: ' + e.message, 'e'); return false; }
+  }
+
+  async function sendMany(list, label) {
+    const text = $('effAll').value;
+    if (parseEff(text) === null) { log('Enter an effect value first (hex, e.g. 03).', 'w'); return; }
+    if (!list.length) { log('No connected device for "' + label + '".', 'w'); return; }
+    for (const d of list) await sendEffect(d, text);
+  }
+
+  async function idRequest() {
+    const d = focusDev(); if (!d || !d.open) return;
+    d.wait = { t: Date.now(), got: 0 };
+    try { await sendBytes(d, [0x00]); log('[TX] COM=' + d.port + ' ID request 0x00'); }
+    catch (e) { d.wait = null; log('[ERROR] ' + e.message, 'e'); }
+  }
+
+  async function bootloader() {
+    const d = focusDev(); if (!d || !d.open) return;
+    if (!confirm(d.port + ': send 0xF0 0xA5 0x5A?\n\nThe board reboots into ROM download mode. LEDs stop and the board no longer answers until firmware is uploaded or it is reset (RST).')) return;
+    try { await sendBytes(d, [0xF0, 0xA5, 0x5A]); log('[TX] COM=' + d.port + ' F0 A5 5A (enter ROM download mode). The COM port should disappear or stop answering.', 'w'); }
+    catch (e) { log('[ERROR] ' + e.message, 'e'); }
+  }
+
+  function stopAuto() { if (auto) { auto.stop = true; } }
+  async function autoRun() {
+    if (auto) { stopAuto(); return; }
+    const d = focusDev(); if (!d || !d.open) return;
+    const type = typeOf(d);
+    const list = CMD_LIST.filter(cm => cm.c !== 0x06 && (type ? (type in cm.kinds) : Object.keys(cm.kinds).length));
+    const sec = Math.max(1, parseFloat($('autoSec').value) || 4);
+    auto = { stop: false, c: null };
+    log('Auto-run on ' + d.port + ': ' + list.length + ' command(s), ' + sec + ' s each. Watch the LEDs.');
+    render();
+    for (const cm of list) {
+      if (auto.stop || !d.open) break;
+      auto.c = cm.c; d.eff = cm.c.toString(16).toUpperCase().padStart(2, '0');
+      render();
+      if (!(await sendEffect(d, d.eff))) break;
+      for (let t = 0; t < sec * 10 && !auto.stop && d.open; t++) await sleep(100);
+    }
+    const stopped = auto.stop;
+    auto = null;
+    if (d.open) await sendEffect(d, '01');   // finish with OFF
+    log('Auto-run ' + (stopped ? 'stopped.' : 'finished.') + ' (OFF sent)');
+    render();
+  }
+
+  function onRx(d, b) {
+    const w = d.wait;
+    if (w && Date.now() - w.t < 1500) {
+      w.got++;
+      if (w.got === 1) {
+        const ok = idOf(d) === b;
+        log('[RX] COM=' + d.port + ' ID reply ' + hex(b) + (ok ? ' (same as scan)' : ' (DIFFERENT from scan ' + (idOf(d) === null ? '--' : hex(idOf(d))) + ')'), ok ? 'g' : 'e');
+      } else {
+        log('[RX] COM=' + d.port + ' extra byte after ID reply: ' + hex(b) + ' — board sent more than 1 byte', 'e');
+      }
+      return;
+    }
+    log('[RX] COM=' + d.port + ' unexpected byte ' + hex(b) + (b >= 0x20 && b < 0x7f ? " ('" + String.fromCharCode(b) + "')" : '') + ' — the LED firmware should only answer 0x00', 'e');
+  }
+
+  function startEvents() {
+    const es = new EventSource('/api/events');
+    es.onmessage = (ev) => {
+      let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (m.t === 'log') log(m.m);
+      else if (m.t === 'device') {
+        let d = devs.get(m.port);
+        if (!d) { if (scanTarget === '' && !(m.resp || []).length) return; d = newDev(m.port); devs.set(m.port, d); }
+        d.busy = false; d.open = !!m.open; d.err = m.err || ''; d.pre = m.pre || []; d.resp = m.resp || []; d.probed = true; d.last = '-';
+        if (d.resp.length) log('  Config: ' + cfgText(d)[0], cfgOf(d.resp[0]) && !cfgOf(d.resp[0]).legacy ? 'g' : 'w');
+        if (!focus || scanning === false || d.resp.length) focus = m.port;
+        render();
+      } else if (m.t === 'rx') { const d = devs.get(m.port); if (d) onRx(d, m.b); }
+      else if (m.t === 'closed') { const d = devs.get(m.port); if (d) { d.open = false; d.busy = false; if (auto) stopAuto(); render(); } }
+      else if (m.t === 'readerr') { log('[ERROR] Read error on ' + m.port + ': ' + m.err, 'e'); const d = devs.get(m.port); if (d) { d.open = false; if (auto) stopAuto(); render(); } }
+      else if (m.t === 'scan_done') {
+        scanning = false;
+        const found = [...devs.values()].filter(d => d.resp.length).length;
+        log('Scan complete. ' + found + ' device(s) found.');
+        setStatus('Scan complete. ' + found + ' device(s) found.');
+        render();
+      }
+    };
+  }
+
+  $('btnScan').onclick = scan;
+  $('btnRefresh').onclick = loadPorts;
+  $('btnClose').onclick = async () => { stopAuto(); try { await api('/api/closeports'); setStatus('Ports closed.'); } catch (e) { log('Close failed: ' + e.message, 'e'); } };
+  $('btnSendSel').onclick = () => sendMany([...devs.values()].filter(d => d.open && d.sel), 'selected');
+  $('btnSendAll').onclick = () => sendMany([...devs.values()].filter(d => d.open), 'all connected');
+  $('effAll').oninput = render;
+  $('effAll').onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); $('btnSendSel').click(); } };
+  $('btnId').onclick = idRequest;
+  $('btnBoot').onclick = bootloader;
+  $('btnAuto').onclick = autoRun;
+  $('btnCopy').onclick = async () => {
+    const text = Array.from($('log').childNodes).map(n => n.textContent).join('\n');
+    try { await navigator.clipboard.writeText(text); log('Log copied to the clipboard'); } catch (e) { log('Copy failed: ' + e.message, 'w'); }
+  };
+  $('btnSave').onclick = async () => {
+    const text = Array.from($('log').childNodes).map(n => n.textContent).join('\n');
+    try { const r = await api('/api/savelog', { text }); log('Log saved: ' + r.path); } catch (e) { log('Save failed: ' + e.message, 'w'); }
+  };
+  startEvents(); loadPorts(); render();
+  log('Application started. Choose a port (or All ports) and press SCAN DEVICES. The board must run the DC27_FRT (or kiosk_neo_frt) firmware; close any other program using the COM port.');
+})();
+</script>
+</body>
+</html>
