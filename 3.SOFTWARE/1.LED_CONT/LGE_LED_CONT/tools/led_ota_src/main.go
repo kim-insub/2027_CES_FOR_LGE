@@ -19,10 +19,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -125,6 +125,7 @@ type app struct {
 	binName  string
 	binTag   fwTag
 	binTagOK bool
+	lastDir  string
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -162,20 +163,60 @@ func (a *app) status(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"bt": a.btErr == nil, "err": msg})
 }
 
-// loadbin: the page posts the selected .bin file (raw body, file name in ?name=).
-func (a *app) loadBin(w http.ResponseWriter, r *http.Request) {
-	data, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))
-	if err != nil || len(data) == 0 {
-		writeJSON(w, 400, map[string]string{"error": "파일을 읽을 수 없습니다"})
+// browse: standard Windows "Open" dialog. Starts in the folder of the last file, else the project's
+// bin\ folder next to tools\ (where the PlatformIO build puts LED_0x10_v1.0.bin), else the exe folder.
+func (a *app) browse(w http.ResponseWriter, r *http.Request) {
+	a.mu.Lock()
+	dir := a.lastDir
+	a.mu.Unlock()
+	if dir == "" {
+		if exe, err := os.Executable(); err == nil {
+			dir = filepath.Dir(exe)
+			if st, err := os.Stat(filepath.Join(dir, "..", "bin")); err == nil && st.IsDir() {
+				dir = filepath.Clean(filepath.Join(dir, "..", "bin"))
+			}
+		}
+	}
+	p, err := pickBinFile(dir)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]string{"path": p})
+}
+
+// loadpath: read the .bin at the given path and report its firmware tag.
+func (a *app) loadPath(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Path) == "" {
+		writeJSON(w, 400, map[string]string{"error": "파일 경로를 입력하세요"})
+		return
+	}
+	path := strings.Trim(strings.TrimSpace(req.Path), `"`)
+	st, err := os.Stat(path)
+	if err != nil || st.IsDir() {
+		writeJSON(w, 400, map[string]string{"error": "파일을 찾을 수 없습니다: " + path})
+		return
+	}
+	if st.Size() == 0 || st.Size() > 4<<20 {
+		writeJSON(w, 400, map[string]string{"error": "bin 파일 크기가 맞지 않습니다"})
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "파일을 읽을 수 없습니다: " + err.Error()})
 		return
 	}
 	tag, ok := parseTag(data)
 	a.mu.Lock()
-	a.bin, a.binName, a.binTag, a.binTagOK = data, r.URL.Query().Get("name"), tag, ok
+	a.bin, a.binName, a.binTag, a.binTagOK = data, filepath.Base(path), tag, ok
+	a.lastDir = filepath.Dir(path)
 	a.mu.Unlock()
 	sum := sha256.Sum256(data)
-	writeJSON(w, 200, map[string]any{"size": len(data), "tagOK": ok, "tag": tag, "esp": data[0] == 0xE9,
-		"sha": fmt.Sprintf("%X", sum[:4])})
+	writeJSON(w, 200, map[string]any{"path": path, "name": filepath.Base(path), "size": len(data), "tagOK": ok,
+		"tag": tag, "esp": data[0] == 0xE9, "sha": fmt.Sprintf("%X", sum[:4])})
 }
 
 func (a *app) scan(w http.ResponseWriter, r *http.Request) {
@@ -507,7 +548,8 @@ func main() {
 		_, _ = w.Write(uiHTML)
 	})
 	mux.HandleFunc("/api/status", a.status)
-	mux.HandleFunc("/api/loadbin", a.loadBin)
+	mux.HandleFunc("/api/browse", a.browse)
+	mux.HandleFunc("/api/loadpath", a.loadPath)
 	mux.HandleFunc("/api/scan", a.scan)
 	mux.HandleFunc("/api/update", a.update)
 	mux.HandleFunc("/api/events", a.events)

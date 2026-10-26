@@ -61,7 +61,7 @@ LGE_DC_27 프로젝트의 LED 컨트롤러 펌웨어(ESP32-C6 SuperMini, Platfor
 | 파일 | 해시 |
 |---|---|
 | `platformio.ini` | `e71c1f2e1ab6` |
-| `README.md` | `982ddf0170e5` |
+| `README.md` | `750328666563` |
 | `include/board_pins.h` | `66aaf9842d6f` |
 | `include/usb_noreset.h` | `7b571853a92f` |
 | `src/ble_ota.cpp` | `5115d0e77abb` |
@@ -81,9 +81,11 @@ LGE_DC_27 프로젝트의 LED 컨트롤러 펌웨어(ESP32-C6 SuperMini, Platfor
 | `tools/led_tester_src/console_windows.go` | `20da136eee9e` |
 | `tools/led_tester_src/go.mod` | `3344f06c5972` |
 | `tools/led_tester_src/go.sum` | `f643a5e49304` |
-| `tools/led_ota.exe` | `5d7aa4bc320f` |
-| `tools/led_ota_src/ui.html` | `1c824b7aae1e` |
-| `tools/led_ota_src/main.go` | `412d86efa89e` |
+| `tools/led_ota.exe` | `91c7455e6692` |
+| `tools/led_ota_src/ui.html` | `ba05b38f516a` |
+| `tools/led_ota_src/main.go` | `6f4e08be6ee1` |
+| `tools/led_ota_src/filedlg_windows.go` | `1574ca60f6ae` |
+| `tools/led_ota_src/filedlg_other.go` | `b245a9933165` |
 | `tools/led_ota_src/gui_windows.go` | `c1502e105dcf` |
 | `tools/led_ota_src/console_other.go` | `5d71a8edbf8c` |
 | `tools/led_ota_src/console_windows.go` | `20da136eee9e` |
@@ -107,3 +109,4 @@ LGE_DC_27 프로젝트의 LED 컨트롤러 펌웨어(ESP32-C6 SuperMini, Platfor
 - 2026-10-25 (Claude 앱) — (미기록 변경 반영) platformio.ini 해시가 목록과 달랐음: 10-24에 `[env:dc27_frt_10]`이 `-DDEVICE_ID=0x11`로 바뀌어 있던 것이 사용자에 의해 `0x10`으로 원복된 상태로 확인. 현재 4개 환경 모두 이름과 ID 일치, default_envs = dc27_frt_10.
 - 2026-10-25 (Claude 앱) — 전원 인가 표시 추가: 부팅 직후 스카이블루 디밍(0.5 s 업/0.5 s 다운), PC 첫 바이트 수신 시 소등. 고친 파일: src/main.cpp, src/neo_effect.cpp, src/neo_effect.h, src/neo_effect_config.h, src/colors.h, README.md. exe 변경 없음. 확인: PC 시뮬레이션 4개 ID(디밍 주기, 0x00 응답 1바이트 + 소등, 이후 이펙트·ID 요청 영향 없음). PlatformIO 실빌드는 Claude 앱 환경에서 못 함 → PC에서 빌드/실보드 확인 필요.
 - 2026-10-26 (Claude 앱, 사용자 요청) — BLE 무선 펌웨어 업데이트 추가: src/ble_ota.cpp/.h(NimBLE, 전원 인가 후 5분 광고, PIN 2727, 4 KB 블록+ACK, SHA-256·이미지·태그 종류/ID 검사, 롤백), config.h(FW_TYPE/FW_DESC/FW_VERSION/BLE_OTA_*), main.cpp(ble_ota_init/poll, ESP-IDF 로그 끔, 전송 중 소등, setup 끝에서 앱 유효 표시), platformio.ini(partitions=default.csv 고정, extra_scripts), tools/bin_copy.py(bin/LED_0x1x_v1.0.bin), tools/led_ota.exe + led_ota_src, README·docs. 확인: 4개 ID 클라우드 실빌드, bin 태그. 미확인: 실보드. 참고: platformio.ini의 `default_envs`가 기록(dc27_frt_10)과 달리 `dc27_frt_11`로 되어 있었음 — 손대지 않고 사용자에게 알림.
+- 2026-10-26 (Claude 앱, 사용자 요청) — led_ota.exe: bin 선택을 경로 칸 + [찾아보기...](Windows 파일 열기 창, 처음엔 프로젝트 bin 폴더) + [불러오기]/Enter 로 변경. 고친 파일: tools/led_ota_src/main.go, ui.html, filedlg_windows.go·filedlg_other.go(새 파일), led_ota.exe, README. 확인: Windows 빌드, 경로 읽기 API·화면(헤드리스 Chromium). 파일 열기 창 자체는 Windows 실행 필요.

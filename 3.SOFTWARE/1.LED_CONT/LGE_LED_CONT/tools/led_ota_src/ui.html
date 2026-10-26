@@ -18,6 +18,7 @@
   button:hover:not(:disabled) { background:linear-gradient(#fff,#ececec); border-color:#6d6d6d; }
   button:disabled { color:#8a8a8a; background:#ececec; cursor:default; }
   button.main { font-weight:700; padding:5px 18px; }
+  input.path { flex:1; min-width:300px; width:auto !important; }
   input[type=password], input[type=text] { font:inherit; border:1px solid var(--line); background:#fff; padding:2px 5px; border-radius:2px; width:110px; font-family:Consolas,monospace; }
   fieldset { border:1px solid var(--soft); background:var(--panel); padding:6px 10px 8px; margin:0; min-width:0; }
   legend { font-weight:600; padding:0 4px; color:#333; }
@@ -46,9 +47,11 @@
   <fieldset>
     <legend>① 펌웨어 파일 (.bin)</legend>
     <div class="bar">
-      <input type="file" id="file" accept=".bin">
-      <span id="binInfo" class="mut">선택된 파일 없음 (PlatformIO 빌드 후 프로젝트의 bin\LED_0x10_v1.0.bin 같은 파일)</span>
+      <input type="text" id="path" class="path" placeholder="예) D:\1.COWORK\1.LGE\3.SOFTWARE\1.LED_CONT\LGE_LED_CONT\bin\LED_0x10_v1.0.bin" spellcheck="false">
+      <button class="main" id="btnBrowse">찾아보기...</button>
+      <button id="btnLoad" title="입력한 경로의 파일을 다시 읽기">불러오기</button>
     </div>
+    <div id="binInfo" class="mut" style="margin-top:5px">[찾아보기]로 bin 파일을 고르세요 (PlatformIO 빌드 후 프로젝트의 bin 폴더에 생깁니다).</div>
   </fieldset>
 
   <fieldset class="devbox">
@@ -123,22 +126,34 @@ function render() {
 }
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-$('file').onchange = async () => {
-  const f = $('file').files[0];
-  if (!f) return;
+async function loadPath(p) {
+  p = (p || '').trim();
+  if (!p) return;
   try {
-    bin = await api('/api/loadbin?name=' + encodeURIComponent(f.name), undefined, await f.arrayBuffer());
+    bin = await api('/api/loadpath', { path: p });
+    $('path').value = bin.path;
     const kb = (bin.size / 1024).toFixed(0);
     if (!bin.tagOK) {
-      $('binInfo').innerHTML = `<span class="bad">${esc(f.name)} (${kb} KB): DC27FW 태그 없음 - BLE 업데이트용 bin 이 아닙니다</span>`;
+      $('binInfo').innerHTML = `<span class="bad">${esc(bin.name)} (${kb} KB): DC27FW 태그 없음 - BLE 업데이트용 bin 이 아닙니다</span>`;
     } else {
-      $('binInfo').innerHTML = `<b>${esc(f.name)}</b> &nbsp; ${esc(bin.tag.type)} ${esc(bin.tag.id)} v${esc(bin.tag.ver)} &nbsp; ${kb} KB` +
+      $('binInfo').innerHTML = `<b>${esc(bin.name)}</b> &nbsp; ${esc(bin.tag.type)} ${esc(bin.tag.id)} v${esc(bin.tag.ver)} &nbsp; ${kb} KB` +
         (bin.esp ? '' : ' <span class="bad">(ESP 이미지가 아님)</span>');
     }
-    log(`파일: ${f.name} ${bin.size} 바이트` + (bin.tagOK ? `, ${bin.tag.type} ${bin.tag.id} v${bin.tag.ver}` : ', 태그 없음'), bin.tagOK ? '' : 'e');
-  } catch (e) { bin = null; $('binInfo').textContent = e.message; log(e.message, 'e'); }
+    log(`파일: ${bin.path} ${bin.size} 바이트` + (bin.tagOK ? `, ${bin.tag.type} ${bin.tag.id} v${bin.tag.ver}` : ', 태그 없음'), bin.tagOK ? '' : 'e');
+  } catch (e) { bin = null; $('binInfo').innerHTML = `<span class="bad">${esc(e.message)}</span>`; log(e.message, 'e'); }
   render();
+}
+
+$('btnBrowse').onclick = async () => {
+  $('btnBrowse').disabled = true;
+  try {
+    const r = await api('/api/browse', {});
+    if (r.path) await loadPath(r.path);
+  } catch (e) { log(e.message, 'e'); }
+  $('btnBrowse').disabled = false;
 };
+$('btnLoad').onclick = () => loadPath($('path').value);
+$('path').onkeydown = e => { if (e.key === 'Enter') loadPath($('path').value); };
 
 $('btnScan').onclick = async () => {
   devs = {}; sel = null; render();
