@@ -87,8 +87,8 @@ void setup(void)
   //     PC sends its first byte, then all LEDs turn off.
   neo_effect_init();
 
-  // BLE wireless firmware update: advertises as "LED 0x10 DC27_FRT" for
-  // BLE_OTA_WINDOW_S seconds after power-on (see src/ble_ota.h, config.h).
+  // BLE wireless firmware update + BLE host commands: advertises as
+  // "LED 0x10 DC27_FRT" only while the USB port is out (see src/ble_ota.h).
   ble_ota_init();
 
   // Reached setup() end after a BLE update -> keep the new firmware
@@ -151,6 +151,18 @@ void loop(void)
       //   - Resetting internal state for the new effect.
       neo_effect_handle_command(cmd);
     }
+  }
+
+  // 1-b) Same 1-byte commands over BLE (only while USB is out, after the PIN).
+  //      The ID answer goes back over BLE. No bootloader magic here.
+  uint8_t bcmd;
+  while (ble_ota_host_read(&bcmd))
+  {
+    neo_effect_host_seen();
+    if (bcmd == 0x00)
+      ble_ota_host_reply(neo_effect_get_device_id());
+    else
+      neo_effect_handle_command(bcmd);
   }
 
   // BLE update running: LEDs off once (flash writes + LED effects at the same time are not needed).

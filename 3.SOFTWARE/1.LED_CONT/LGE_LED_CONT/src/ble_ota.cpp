@@ -4,13 +4,15 @@
  *  Threads:
  *    - NimBLE host task : GATT callbacks (must stay short: copy data, post to the queue)
  *    - "ble_ota" task   : flash work (esp_ota_begin / write / end), sends the notifications
- *    - loop()           : ble_ota_poll() -> power-on window, reboot after success
+ *    - loop()           : ble_ota_poll() -> USB plug check (BLE on only while USB is out),
+ *                         reboot after success; ble_ota_host_read() -> 1-byte commands from BLE
  * ========================================================================== */
 #include <Arduino.h>
 #include <string.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
+#include "HWCDC.h"
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
 #include "mbedtls/sha256.h"
@@ -29,21 +31,27 @@ static const char kBleName[] = FW_TYPE " " XSTR(DEVICE_ID) " " FW_DESC;
 #define OTA_INFO_UUID  "4c474501-dc27-4f54-a000-000000000002"
 #define OTA_CTRL_UUID  "4c474501-dc27-4f54-a000-000000000003"
 #define OTA_DATA_UUID  "4c474501-dc27-4f54-a000-000000000004"
+#define OTA_HOST_UUID  "4c474501-dc27-4f54-a000-000000000005"
 
 #define OTA_BLOCK      4096u
 #define OTA_MAX_PIN_TRIES 3
+#define USB_OUT_MS     2000u   /* no USB SOF for this long -> "USB out" -> BLE on */
+#define USB_IN_MS      300u    /* SOF back for this long   -> "USB in"  -> BLE off */
 
 enum { EV_BEGIN, EV_BLOCK, EV_END, EV_ABORT };
 struct OtaEvent { uint8_t type; };
 
 static BLEServer         *s_server   = nullptr;
 static BLECharacteristic *s_ctrl     = nullptr;
+static BLECharacteristic *s_host     = nullptr;
 static QueueHandle_t      s_queue    = nullptr;
+static QueueHandle_t      s_host_q   = nullptr;   /* 1-byte host commands from BLE -> loop() */
 
 static volatile bool      s_connected   = false;
 static volatile uint16_t  s_conn_handle = 0;
 static volatile bool      s_advertising = false;
-static volatile bool      s_window_open = true;
+static volatile bool      s_ble_allowed = false;   /* USB is out (debounced) */
+static volatile bool      s_authed      = false;   /* PIN given on this connection */
 static volatile bool      s_locked      = false;
 static uint8_t            s_pin_fail    = 0;
 
@@ -92,7 +100,7 @@ static void post(uint8_t type)
 
 static void start_advertising(void)
 {
-  if (!s_window_open || s_locked || s_connected) return;
+  if (!s_ble_allowed || s_locked || s_connected) return;
   BLEDevice::startAdvertising();
   s_advertising = true;
 }
@@ -242,10 +250,24 @@ class ServerCb : public BLEServerCallbacks {
   void onDisconnect(BLEServer *, ble_gap_conn_desc *) override
   {
     s_connected = false;
+    s_authed = false;
     if (s_active) post(EV_ABORT);                      /* link lost: drop the half-written image */
     start_advertising();
   }
 };
+
+/* PIN check shared by AUTH and BEGIN. 3 wrong PINs -> locked until power cycle. */
+static uint8_t check_pin(const uint8_t *pin, size_t len)
+{
+  if (s_locked) return OTA_ST_LOCKED;
+  if (len != strlen(BLE_OTA_PIN) || memcmp(pin, BLE_OTA_PIN, len) != 0) {
+    if (++s_pin_fail >= OTA_MAX_PIN_TRIES) { s_locked = true; return OTA_ST_LOCKED; }
+    return OTA_ST_BAD_PIN;
+  }
+  s_pin_fail = 0;
+  s_authed = true;
+  return OTA_ST_OK;
+}
 
 class CtrlCb : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *c) override
@@ -258,17 +280,8 @@ class CtrlCb : public BLECharacteristicCallbacks {
       if (s_locked) { notify_status(0x81, OTA_ST_LOCKED); return; }
       if (s_active || s_reboot) { notify_status(0x81, OTA_ST_BUSY); return; }
       if (n < 39 || n < (size_t)(39 + d[38])) { notify_status(0x81, OTA_ST_BAD_CMD); return; }
-      const size_t pinlen = d[38];
-      if (pinlen != strlen(BLE_OTA_PIN) || memcmp(d + 39, BLE_OTA_PIN, pinlen) != 0) {
-        if (++s_pin_fail >= OTA_MAX_PIN_TRIES) {
-          s_locked = true;
-          notify_status(0x81, OTA_ST_LOCKED);
-        } else {
-          notify_status(0x81, OTA_ST_BAD_PIN);
-        }
-        return;
-      }
-      s_pin_fail = 0;
+      const uint8_t pst = check_pin(d + 39, d[38]);
+      if (pst != OTA_ST_OK) { notify_status(0x81, pst); return; }
       s_size = get_u32(d + 1);
       memcpy(s_sha_expect, d + 5, 32);
       s_force_id = (d[37] & 0x01) != 0;
@@ -286,6 +299,10 @@ class CtrlCb : public BLECharacteristicCallbacks {
     }
     else if (d[0] == 0x03) {                            /* ABORT */
       if (s_active) post(EV_ABORT);
+    }
+    else if (d[0] == 0x04) {                            /* AUTH: unlock the HOST characteristic */
+      if (n < 2 || n < (size_t)(2 + d[1])) { notify_status(0x85, OTA_ST_BAD_CMD); return; }
+      notify_status(0x85, check_pin(d + 2, d[1]));
     }
   }
 };
@@ -314,10 +331,35 @@ class DataCb : public BLECharacteristicCallbacks {
   }
 };
 
+/* HOST: the same 1-byte commands as the USB port (0x00 ID request, 0x01..0x28 effects).
+ * Handled in loop() (the effect engine is not thread safe); the ID answer comes back as a
+ * notification on HOST. Ignored until AUTH. */
+class HostCb : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *c) override
+  {
+    if (!s_authed) return;
+    const uint8_t *d = c->getData();
+    for (size_t i = 0; i < c->getLength(); i++) xQueueSend(s_host_q, &d[i], 0);
+  }
+};
+
 /* ---------------------------------------------------------------- public */
+bool ble_ota_host_read(uint8_t *b)
+{
+  return s_host_q && xQueueReceive(s_host_q, b, 0) == pdTRUE;
+}
+
+void ble_ota_host_reply(uint8_t b)
+{
+  if (!s_host || !s_connected) return;
+  s_host->setValue(&b, 1);
+  s_host->notify();
+}
+
 void ble_ota_init(void)
 {
   s_queue = xQueueCreate(8, sizeof(OtaEvent));
+  s_host_q = xQueueCreate(64, sizeof(uint8_t));
   xTaskCreate(ota_task, "ble_ota", 6144, nullptr, 2, nullptr);
 
   BLEDevice::init(kBleName);
@@ -332,6 +374,9 @@ void ble_ota_init(void)
   s_ctrl->setCallbacks(new CtrlCb());
   BLECharacteristic *data = svc->createCharacteristic(OTA_DATA_UUID, BLECharacteristic::PROPERTY_WRITE_NR);
   data->setCallbacks(new DataCb());
+  s_host = svc->createCharacteristic(OTA_HOST_UUID,
+             BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR | BLECharacteristic::PROPERTY_NOTIFY);
+  s_host->setCallbacks(new HostCb());
   svc->start();
 
   /* name in the advertising packet, service UUID in the scan response (both do not fit in 31 B) */
@@ -342,23 +387,35 @@ void ble_ota_init(void)
   sr.setCompleteServices(BLEUUID(OTA_SVC_UUID));
   adv->setAdvertisementData(ad);
   adv->setScanResponseData(sr);
-  start_advertising();
+  /* advertising starts from ble_ota_poll() once the USB port is seen to be out */
 }
 
 void ble_ota_poll(void)
 {
   if (s_reboot && (int32_t)(millis() - s_reboot_at) >= 0) {
-    Serial.flush();
     esp_restart();
   }
 
-  if (s_window_open && millis() >= (uint32_t)BLE_OTA_WINDOW_S * 1000u) {
-    s_window_open = false;
+  /* USB plug state from the USB-Serial-JTAG SOF frames (the PC sends one every 1 ms while the
+   * port is powered and enumerated). Debounced: the reading can flap for a few ms. */
+  static bool     last_raw = true;
+  static uint32_t since    = 0;
+  const bool raw = HWCDC::isPlugged();
+  const uint32_t now = millis();
+  if (raw != last_raw) { last_raw = raw; since = now; }
+  if (!raw && !s_ble_allowed && now - since >= USB_OUT_MS) {
+    s_ble_allowed = true;                              /* USB out -> BLE on */
+    start_advertising();
+  } else if (raw && s_ble_allowed && now - since >= USB_IN_MS) {
+    s_ble_allowed = false;                             /* USB back -> BLE off */
   }
-  /* window over (or locked): stop advertising, drop an idle connection */
-  if (!s_window_open || s_locked) {
+
+  /* USB connected: USB has priority -> stop advertising, drop the BLE link, a running transfer
+   * is aborted (the old firmware stays). Locked (wrong PIN): same, except a transfer. */
+  if (!s_ble_allowed || s_locked) {
     if (s_advertising) { BLEDevice::stopAdvertising(); s_advertising = false; }
-    if (s_connected && !s_active && !s_reboot) {
+    if (s_connected && !s_reboot && (!s_active || !s_ble_allowed)) {
+      if (s_active) post(EV_ABORT);
       s_server->disconnect(s_conn_handle);
       s_connected = false;
     }
