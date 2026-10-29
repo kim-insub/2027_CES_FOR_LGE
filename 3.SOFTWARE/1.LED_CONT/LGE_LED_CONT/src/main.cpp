@@ -49,8 +49,11 @@
 
 #include <Arduino.h>
 #include "usb_noreset.h"
+#include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "config.h"
 #include "neo_effect.h"
+#include "ble_ota.h"
 
 
 /**
@@ -68,6 +71,9 @@
 void setup(void)
 {
   usb_disable_autoreset();   /* see usb_noreset.h */
+  // Host protocol: nothing but the 1-byte ID may appear on the serial port.
+  // ESP-IDF logs (BLE stack) also go to the USB port -> switch them off.
+  esp_log_level_set("*", ESP_LOG_NONE);
   // Initialize serial interface for communication with host PC.
   // This port is used for:
   //   - Receiving effect commands (0x01~0x18)
@@ -80,6 +86,14 @@ void setup(void)
   //     sky blue dimming (0.5 s up / 0.5 s down) until the host
   //     PC sends its first byte, then all LEDs turn off.
   neo_effect_init();
+
+  // BLE wireless firmware update + BLE host commands: advertises as
+  // "LED 0x10 DC27_FRT" only while the USB port is out (see src/ble_ota.h).
+  ble_ota_init();
+
+  // Reached setup() end after a BLE update -> keep the new firmware
+  // (a crash before this point makes the bootloader roll back).
+  esp_ota_mark_app_valid_cancel_rollback();
 }
 
 /**
@@ -138,6 +152,32 @@ void loop(void)
       neo_effect_handle_command(cmd);
     }
   }
+
+  // 1-b) Same 1-byte commands over BLE (only while USB is out, after the PIN).
+  //      The ID answer goes back over BLE. No bootloader magic here.
+  uint8_t bcmd;
+  while (ble_ota_host_read(&bcmd))
+  {
+    neo_effect_host_seen();
+    if (bcmd == 0x00)
+      ble_ota_host_reply(neo_effect_get_device_id());
+    else
+      neo_effect_handle_command(bcmd);
+  }
+
+  // BLE update running: LEDs off once (flash writes + LED effects at the same time are not needed).
+  static bool ota_leds_off = false;
+  if (ble_ota_busy() && !ota_leds_off)
+  {
+    neo_effect_host_seen();
+    neo_effect_handle_command(0x01);
+    ota_leds_off = true;
+  }
+  else if (!ble_ota_busy())
+  {
+    ota_leds_off = false;
+  }
+  ble_ota_poll();
 
   // 2) Advance the current effect.
   //

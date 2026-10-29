@@ -18,7 +18,7 @@ DEVICE_ID에 따라 LED 수와 사용 가능한 이펙트가 달라진다. 이�
 ## 호스트 프로토콜 (115200 8N1, 네이티브 USB)
 - PC `0x00` → 보드 **DEVICE_ID 1바이트만** 응답. 이 펌웨어는 시리얼에 다른 것을 출력하지 않는다.
 - PC `0x01`~`0x28` → 이펙트 명령 (아래 표). 해당 ID에 없는 명령은 무시.
-- PC `0xF0 0xA5 0x5A` → ROM 다운로드 모드로 재부팅(BOOT 버튼 없이 업데이트).
+- PC `0xF0 0xA5 0x5A` → ROM 다운로드 모드로 재부팅(BOOT 버튼 없이 업데이트). USB 없이 무선으로는 아래 "BLE 무선 펌웨어 업데이트 + BLE 검사".
 - **전원 인가 직후(PC 미연결)**: 스카이블루(`COLOR_BOOT_WAIT`, 0x0B와 같은 색) 디밍 온/오프 반복(0.5 s 밝아짐 + 0.5 s 어두워짐, `NEO_CFG_BOOT_WAIT_PERIOD_MS`). PC에서 **첫 바이트**(스캔의 `0x00` 또는 이펙트 명령)를 받으면 소등하고 이후는 명령대로 동작. 한 번 소등되면 재부팅 전까지 다시 켜지지 않는다. DTR은 판단에 쓰지 않는다(PC 프로그램이 스캔 때 DTR을 끄므로).
 - `usb_disable_autoreset()` 로 COM 포트를 열 때의 DTR/RTS 리셋을 막는다 (`include/usb_noreset.h`).
 
@@ -54,6 +54,37 @@ DEVICE_ID에 따라 LED 수와 사용 가능한 이펙트가 달라진다. 이�
 - 업로드 전에 검사용 EXE / 시리얼 모니터를 닫는다 (COM 포트 점유 시 `액세스가 거부되었습니다`).
 - 자동 리셋이 꺼져 있으므로 업로드는 BOOT+RST 로 다운로드 모드에 넣거나, 펌웨어가 돌고 있으면 `0xF0 0xA5 0x5A` 전송.
 - 핀은 `include/board_pins.h` 한 곳 (LED 데이터 = GPIO6). 3.3 V → WS2812(5 V) 는 레벨시프터 권장.
+
+## BLE 무선 펌웨어 업데이트 + BLE 검사 (2026-10-26 추가, 10-29 변경)
+케이스 조립 후 BOOT 버튼 없이 Bluetooth LE 로 펌웨어를 바꾸고, 이어서 같은 프로그램으로 검사한다.
+보드 쪽 `src/ble_ota.cpp/.h`, PC 쪽 **`tools\led_tool.exe`** (= 기존 led_tester + BLE 검색/연결 + 펌웨어 업데이트, 소스 `tools\led_tool_src`).
+
+**BLE 는 보드의 USB 가 빠져 있을 때만 켜진다 (USB 우선).**
+- USB 케이블을 빼거나 USB 전원을 끄면(보드는 5 V 로 계속 동작) USB 신호(SOF)가 2 초 동안 없을 때 BLE 광고 시작.
+- USB 가 다시 연결되면 즉시 BLE 광고 중지, BLE 연결 끊김, 전송 중이던 업데이트는 중단(기존 펌웨어 유지).
+- USB 연결 중에는 지금과 완전히 같다. PC 가 계속 바이트를 보내도 처리 방식은 그대로(`0x00` → ID 1바이트, 시리얼 출력 없음). USB 판단은 데이터가 아니라 USB 하드웨어 신호로 한다.
+
+**처음 한 번은 USB 로 올려야 한다** (이 버전). 그 다음부터는 무선.
+
+1. PlatformIO 빌드 (`pio run -e dc27_frt_10`) → `bin\LED_0x10_v1.0.bin` 자동 생성 (`tools/bin_copy.py`). 펌웨어를 고치면 `src/config.h` 의 `FW_VERSION` 을 올린다. 파일 이름은 바꿔도 된다(확인은 bin 안의 태그 `DC27FW|LED|0x10|1.0|`).
+2. 보드의 USB 를 뺀다 (또는 USB 전원 OFF).
+3. `tools\led_tool.exe` → PIN 입력 → **BLE SEARCH** → 목록에 `BLE LED 0x10 DC27_FRT` 가 나오면 **Connect** (PIN 확인 + BLE 로 `0x00` → Device ID 확인, 버전 표시).
+4. Firmware update 칸: **Browse...** (Windows 파일 선택 창, 처음엔 프로젝트 `bin` 폴더) → bin 선택 → **UPDATE FIRMWARE**.
+5. 보드가 SHA-256·이미지·태그를 검사하고 재부팅 → 프로그램이 자동으로 다시 연결해 `[CHECK] Update verified: board now runs LED 0x10 v1.1` 처럼 버전·ID 를 확인한다.
+6. 같은 화면에서 이펙트 명령 표 / Auto-run 으로 LED 동작을 검사한다 (BLE 로 전송). 끝나면 USB 를 다시 꽂는다 → BLE 자동 종료.
+
+| 항목 | 내용 |
+|---|---|
+| BLE 이름 | `<종류> 0x<ID> <설명>` → `LED 0x10 DC27_FRT`. RF/SW/POWER 보드도 같은 규칙 (`PWR 0x50 12V` 등) |
+| PIN | `src/config.h` 의 `BLE_OTA_PIN` (현재 `0000`). BLE 연결과 업데이트에 필요. 3 회 틀리면 재부팅 전까지 잠김 |
+| BLE 명령 | USB 와 같은 1바이트 명령(0x00 ID, 0x01~0x28 이펙트). `F0 A5 5A` 는 BLE 로는 받지 않음 |
+| ID 확인 | 보드 ID 와 bin ID 가 다르면 거부. ID 를 바꿀 때만 `Allow ID change` 체크. 종류(LED/RF...)가 다르면 항상 거부 |
+| 실패하면 | 전송 끊김·검사 실패·USB 재연결 → 기존 펌웨어 그대로. 새 펌웨어가 `setup()` 끝까지 못 가고 죽으면 부트로더가 이전 펌웨어로 되돌린다 |
+| 파티션 | 기본 `default.csv` (app0/app1 각 1.25 MB). 펌웨어 약 756 KB |
+| LED | 전송 시작 시 소등. 재부팅 후 평소처럼 스카이블루 디밍 → 첫 명령(USB 또는 BLE)에 소등 |
+
+- exe 다시 빌드(Go 1.26): `tools\led_tool_src` 에서 `go build -trimpath -ldflags "-H=windowsgui -s -w" -o ..\led_tool.exe .`
+- `tools\led_tester.exe`(USB 전용), `tools\led_ota.exe`(업데이트 전용)는 이전 도구. 새 펌웨어에서도 동작하지만 `led_tool.exe` 하나로 대체한다.
 
 ## 새 보드 bring-up 순서
 1. eFuse `DIS_USB_SERIAL_JTAG_ROM_PRINT` (보드당 1회, 되돌릴 수 없음): `ESP32C6\tools\burn_silent_boot.bat COMx`

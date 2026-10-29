@@ -32,6 +32,19 @@
 #endif
 #include "board_pins.h"   /* LED_PIN : ESP32-C6 GPIO (see include/board_pins.h) */
 
+/* -------- Firmware identity / BLE wireless update (src/ble_ota.h) --------
+ * BLE name = "FW_TYPE 0x<DEVICE_ID> FW_DESC"  ->  "LED 0x10 DC27_FRT"
+ * FW_VERSION : 펌웨어를 고칠 때마다 올린다. bin 파일 이름(bin/LED_0x10_v1.0.bin)과
+ *              exe 화면에 그대로 나온다.
+ * BLE 는 USB 가 빠져 있을 때(USB 전원 OFF 또는 케이블 분리, 보드는 5 V 로 계속 동작)만 켜진다.
+ * BLE_OTA_PIN      : led_tool.exe 에서 BLE 연결/업데이트할 때 입력하는 PIN (3 회 틀리면 재부팅 전까지 잠김). */
+#define FW_TYPE             "LED"
+#define FW_DESC             "DC27_FRT"
+#define FW_VERSION          "1.0"
+#ifndef BLE_OTA_PIN
+#define BLE_OTA_PIN         "0000"
+#endif
+
 /* -------- DEVICE_ID -> FX_TYPE / LED 구성 -------- */
 #if   (DEVICE_ID == 0x10)
 
